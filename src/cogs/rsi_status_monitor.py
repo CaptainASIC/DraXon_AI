@@ -31,7 +31,7 @@ class RSIStatusMonitorCog(commands.Cog):
         """Clean up when cog is unloaded"""
         self.check_status_task.cancel()
 
-    async def check_status(self) -> Optional[Dict[str, str]]:
+    async def check_status(self) -> Dict[str, str]:
         """Check current system status"""
         try:
             # Check Redis cache first
@@ -44,7 +44,7 @@ class RSIStatusMonitorCog(commands.Cog):
             async with self.bot.session.get(RSI_API['STATUS_URL']) as response:
                 if response.status != 200:
                     logger.error(f"Status page request failed: {response.status}")
-                    return None
+                    return self.system_statuses
 
                 content = await response.text()
                 soup = BeautifulSoup(content, 'html.parser')
@@ -91,7 +91,7 @@ class RSIStatusMonitorCog(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error checking status: {e}")
-            return None
+            return self.system_statuses
 
     def format_status_embed(self) -> discord.Embed:
         """Format current status for Discord embed"""
@@ -119,21 +119,7 @@ class RSIStatusMonitorCog(commands.Cog):
             return
             
         try:
-            # Update statusimport discord
-from discord import app_commands
-from discord.ext import commands, tasks
-import logging
-from bs4 import BeautifulSoup
-from datetime import datetime
-from typing import Dict, Optional
-
-from src.utils.constants import (
-    RSI_API,
-    STATUS_EMOJIS,
-    CACHE_SETTINGS
-)
-
-logger = logging.getLogger('DraXon_AI')
+            # Update status
             current_status = await self.check_status()
             if not current_status:
                 return
@@ -148,7 +134,7 @@ logger = logging.getLogger('DraXon_AI')
 
     @check_status_task.before_loop
     async def before_status_check(self):
-        """Setup before starting status check loop"""
+        """Wait for bot to be ready before starting checks"""
         await self.bot.wait_until_ready()
         
         # Restore cached status
