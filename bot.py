@@ -1,15 +1,19 @@
 import asyncio
 import logging
-from pathlib import Path
-from typing import Optional
 import certifi
 import ssl
+from pathlib import Path
+from typing import Optional
 
+from src.utils.logger import setup_logging
 from src.bot.client import DraXonAIBot
 from src.config.settings import Settings
 from src.db.database import init_db, init_redis
 from src.utils.constants import LOG_DIR, APP_VERSION
-from src.utils.logger import setup_logging
+
+# Initialize logging first
+setup_logging()
+logger = logging.getLogger('DraXon_AI')
 
 async def initialize_services(settings: Settings):
     """Initialize database and Redis connections"""
