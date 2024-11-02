@@ -1,4 +1,6 @@
 import asyncio
+import asyncpg
+import redis
 import logging
 import certifi
 import ssl
