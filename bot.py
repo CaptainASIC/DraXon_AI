@@ -3,7 +3,7 @@ import logging
 import certifi
 import ssl
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from src.utils.logger import setup_logging
 from src.bot.client import DraXonAIBot
