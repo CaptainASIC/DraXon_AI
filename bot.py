@@ -41,7 +41,7 @@ async def main():
         logger.info(f"Starting DraXon AI Bot v{APP_VERSION}")
         
         # Load settings
-        settings = get_settings()
+        settings = Settings()
         
         # Initialize services
         db_pool, redis_pool = await initialize_services(settings)
