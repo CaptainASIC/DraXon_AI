@@ -50,7 +50,7 @@ async def cleanup_services(bot: Optional[DraXonAIBot] = None,
             
         if redis_pool:
             logger.info("Closing Redis connection...")
-            await redis_pool.close()
+            await redis_pool.aclose()  # Changed from close() to aclose()
             
         logger.info("All services cleaned up successfully")
     except Exception as e:

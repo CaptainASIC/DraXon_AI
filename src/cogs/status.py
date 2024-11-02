@@ -1,12 +1,11 @@
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 import logging
-from datetime import datetime
 from typing import Dict, Optional
-from bs4 import BeautifulSoup
 
 from src.utils.constants import (
-    RSI_API,
+    CHANNELS_CONFIG,
     STATUS_EMOJIS,
     CACHE_SETTINGS
 )
