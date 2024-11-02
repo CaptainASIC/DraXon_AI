@@ -15,44 +15,19 @@ from src.utils.constants import LOG_DIR, APP_VERSION
 setup_logging()
 logger = logging.getLogger('DraXon_AI')
 
-async def initialize_services(settings: Settings):
+async def initialize_services(settings: Settings) -> Tuple[asyncpg.Pool, redis.Redis]:
     """Initialize database and Redis connections"""
     try:
         # Initialize PostgreSQL connection
-        db_pool = await init_db(
-            user=settings.postgres_user,
-            password=settings.postgres_password,
-            database=settings.postgres_db,
-            host=settings.postgres_host,
-            port=settings.postgres_port
-        )
+        db_pool = await init_db(settings.database_url)
         
         # Initialize Redis connection
-        redis_pool = await init_redis(
-            host=settings.redis_host,
-            port=settings.redis_port,
-            password=settings.redis_password,
-            db=settings.redis_db
-        )
+        redis_pool = await init_redis(settings.redis_url)
         
         return db_pool, redis_pool
     except Exception as e:
-        logging.error(f"Failed to initialize services: {e}")
+        logger.error(f"Failed to initialize services: {e}")
         raise
-
-async def cleanup_services(bot: Optional[DraXonAIBot] = None, 
-                         db_pool = None, 
-                         redis_pool = None):
-    """Cleanup function to properly close connections"""
-    try:
-        if bot:
-            await bot.close()
-        if db_pool:
-            await db_pool.close()
-        if redis_pool:
-            await redis_pool.close()
-    except Exception as e:
-        logging.error(f"Error during cleanup: {e}")
 
 async def main():
     """Main entry point for the DraXon AI bot"""
@@ -64,7 +39,7 @@ async def main():
         logger.info(f"Starting DraXon AI Bot v{APP_VERSION}")
         
         # Load settings
-        settings = Settings()
+        settings = get_settings()
         
         # Initialize services
         db_pool, redis_pool = await initialize_services(settings)
@@ -95,6 +70,21 @@ async def main():
     except Exception as e:
         logger.critical(f"Critical error in main: {e}")
         raise
+
+async def cleanup_services(bot: Optional[DraXonAIBot] = None, 
+                         db_pool = None, 
+                         redis_pool = None):
+    """Cleanup function to properly close connections"""
+    try:
+        if bot:
+            await bot.close()
+        if db_pool:
+            await db_pool.close()
+        if redis_pool:
+            await redis_pool.close()
+    except Exception as e:
+        logging.error(f"Error during cleanup: {e}")
+
 
 if __name__ == "__main__":
     try:
