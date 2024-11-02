@@ -6,8 +6,7 @@ from typing import Optional
 import colorlog
 
 from src.utils.constants import (
-    LOG_DIR,
-    LOGGING_CONFIG
+    LOG_DIR
 )
 
 def setup_logging(level: Optional[str] = None) -> None:
