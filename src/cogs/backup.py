@@ -4,12 +4,11 @@ from discord.ext import commands
 import logging
 import json
 import datetime
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 import io
 import asyncio
 
 from src.utils.constants import CHANNEL_PERMISSIONS
-from src.db.repository import MemberRepository
 
 logger = logging.getLogger('DraXon_AI')
 
@@ -42,33 +41,6 @@ class BackupCog(commands.Cog):
             'id': role.id
         }
 
-    def serialize_channel(self, channel: discord.abc.GuildChannel) -> Dict[str, Any]:
-        """Serialize a channel's data"""
-        base_data = {
-            'name': channel.name,
-            'type': str(channel.type),
-            'position': channel.position,
-            'overwrites': self.serialize_overwrites(channel.overwrites),
-            'id': channel.id,
-            'category_id': channel.category.id if channel.category else None
-        }
-
-        if isinstance(channel, discord.TextChannel):
-            base_data.update({
-                'topic': channel.topic,
-                'nsfw': channel.nsfw,
-                'slowmode_delay': channel.slowmode_delay,
-                'default_auto_archive_duration': channel.default_auto_archive_duration,
-                'pins': await self.backup_pins(channel)
-            })
-        elif isinstance(channel, discord.VoiceChannel):
-            base_data.update({
-                'bitrate': channel.bitrate,
-                'user_limit': channel.user_limit,
-            })
-
-        return base_data
-
     async def backup_pins(self, channel: discord.TextChannel) -> List[Dict[str, Any]]:
         """Backup pinned messages from a channel"""
         pins = []
@@ -84,6 +56,38 @@ class BackupCog(commands.Cog):
         except Exception as e:
             logger.error(f"Error backing up pins from {channel.name}: {e}")
         return pins
+
+    async def serialize_channel(self, channel: discord.abc.GuildChannel) -> Dict[str, Any]:
+        """Serialize a channel's data"""
+        try:
+            base_data = {
+                'name': channel.name,
+                'type': str(channel.type),
+                'position': channel.position,
+                'overwrites': self.serialize_overwrites(channel.overwrites),
+                'id': channel.id,
+                'category_id': channel.category.id if channel.category else None
+            }
+
+            if isinstance(channel, discord.TextChannel):
+                base_data.update({
+                    'topic': channel.topic,
+                    'nsfw': channel.nsfw,
+                    'slowmode_delay': channel.slowmode_delay,
+                    'default_auto_archive_duration': channel.default_auto_archive_duration,
+                    'pins': await self.backup_pins(channel)
+                })
+            elif isinstance(channel, discord.VoiceChannel):
+                base_data.update({
+                    'bitrate': channel.bitrate,
+                    'user_limit': channel.user_limit,
+                })
+
+            return base_data
+
+        except Exception as e:
+            logger.error(f"Error serializing channel {channel.name}: {e}")
+            raise
 
     async def create_backup(self, guild: discord.Guild) -> Dict[str, Any]:
         """Create a comprehensive backup of the guild"""
@@ -106,9 +110,12 @@ class BackupCog(commands.Cog):
 
             # Back up channels
             for channel in guild.channels:
-                if isinstance(channel, (discord.TextChannel, discord.VoiceChannel)):
-                    channel_data = await self.serialize_channel(channel)
-                    backup_data['channels'].append(channel_data)
+                try:
+                    if isinstance(channel, (discord.TextChannel, discord.VoiceChannel)):
+                        channel_data = await self.serialize_channel(channel)
+                        backup_data['channels'].append(channel_data)
+                except Exception as e:
+                    logger.error(f"Error backing up channel {channel.name}: {e}")
 
             # Back up bot settings from Redis
             async with self.bot.redis.pipeline() as pipe:
@@ -127,7 +134,52 @@ class BackupCog(commands.Cog):
             logger.error(f"Error creating backup: {e}")
             raise
 
-    async def restore_backup(self, guild: discord.Guild, backup_data: Dict[str, Any]) -> List[str]:
+    def deserialize_overwrites(self, 
+                           overwrites_data: Dict[str, Dict[str, int]], 
+                           guild: discord.Guild) -> Dict[discord.Role, discord.PermissionOverwrite]:
+        """Convert serialized overwrites back to Discord permission overwrites"""
+        result = {}
+        for key, data in overwrites_data.items():
+            target_type, target_id = key.split(':', 1)
+            
+            if target_type == 'role':
+                target = discord.utils.get(guild.roles, name=target_id)
+            else:  # member
+                target = guild.get_member(int(target_id))
+                
+            if target:
+                overwrite = discord.PermissionOverwrite()
+                allow = discord.Permissions(data['allow'])
+                deny = discord.Permissions(data['deny'])
+                
+                for perm, value in allow:
+                    if value:
+                        setattr(overwrite, perm, True)
+                for perm, value in deny:
+                    if value:
+                        setattr(overwrite, perm, False)
+                        
+                result[target] = overwrite
+                
+        return result
+
+    async def restore_pins(self, channel: discord.TextChannel, 
+                          pins_data: List[Dict[str, Any]]) -> List[str]:
+        """Restore pins to a channel"""
+        logs = []
+        for pin in pins_data:
+            try:
+                message = await channel.send(
+                    f"📌 Restored Pin from {pin['author']}\n{pin['content']}"
+                )
+                await message.pin()
+                logs.append(f"✅ Restored pin in {channel.name}")
+            except Exception as e:
+                logs.append(f"⚠️ Error restoring pin in {channel.name}: {e}")
+        return logs
+
+    async def restore_backup(self, guild: discord.Guild, 
+                           backup_data: Dict[str, Any]) -> List[str]:
         """Restore a guild from backup data"""
         logs = []
         logs.append("Starting restore process...")
@@ -156,6 +208,7 @@ class BackupCog(commands.Cog):
             # Create roles
             role_map = {}
             logs.append("Restoring roles...")
+            
             for role_data in sorted(backup_data['roles'], key=lambda r: r['position']):
                 try:
                     new_role = await guild.create_role(
@@ -172,62 +225,88 @@ class BackupCog(commands.Cog):
 
             # Create channels
             logs.append("Restoring channels...")
-            for channel_data in sorted(backup_data['channels'], key=lambda c: c['position']):
-                try:
-                    overwrites = {}
-                    for key, data in channel_data['overwrites'].items():
-                        target_type, target_id = key.split(':', 1)
-                        if target_type == 'role':
-                            target = discord.utils.get(guild.roles, name=target_id)
-                        else:
-                            target = guild.get_member(int(target_id))
-                        
-                        if target:
-                            overwrite = discord.PermissionOverwrite()
-                            allow = discord.Permissions(data['allow'])
-                            deny = discord.Permissions(data['deny'])
-                            
-                            for perm, value in allow:
-                                if value:
-                                    setattr(overwrite, perm, True)
-                            for perm, value in deny:
-                                if value:
-                                    setattr(overwrite, perm, False)
-                            
-                            overwrites[target] = overwrite
+            
+            # Sort channels by category and position
+            channels_by_category: Dict[Optional[int], List[Dict[str, Any]]] = {}
+            for channel_data in backup_data['channels']:
+                category_id = channel_data.get('category_id')
+                if category_id not in channels_by_category:
+                    channels_by_category[category_id] = []
+                channels_by_category[category_id].append(channel_data)
 
-                    # Create channel based on type
-                    if channel_data['type'] == 'text':
-                        channel = await guild.create_text_channel(
-                            name=channel_data['name'],
-                            topic=channel_data.get('topic'),
-                            nsfw=channel_data.get('nsfw', False),
-                            slowmode_delay=channel_data.get('slowmode_delay', 0),
-                            position=channel_data['position'],
-                            overwrites=overwrites
+            # Create categories first
+            category_map = {}
+            for category_id, channels in channels_by_category.items():
+                if category_id is None:
+                    continue
+
+                category_data = next(
+                    (ch for ch in channels if ch.get('type') == 'category'),
+                    None
+                )
+                if category_data:
+                    try:
+                        overwrites = self.deserialize_overwrites(
+                            category_data['overwrites'],
+                            guild
                         )
-                        
-                        # Restore pins
-                        if 'pins' in channel_data:
-                            for pin in channel_data['pins']:
-                                message = await channel.send(
-                                    f"📌 Restored Pin from {pin['author']}\n{pin['content']}"
+                        category = await guild.create_category(
+                            name=category_data['name'],
+                            overwrites=overwrites,
+                            position=category_data['position']
+                        )
+                        category_map[category_id] = category
+                        logs.append(f"Created category: {category.name}")
+                    except Exception as e:
+                        logs.append(f"⚠️ Error creating category: {e}")
+
+            # Create other channels
+            for category_id, channels in channels_by_category.items():
+                category = category_map.get(category_id)
+                for channel_data in sorted(channels, key=lambda c: c['position']):
+                    try:
+                        channel_type = getattr(discord.ChannelType, channel_data['type'].split('.')[-1])
+                        if channel_type == discord.ChannelType.category:
+                            continue
+
+                        overwrites = self.deserialize_overwrites(
+                            channel_data['overwrites'],
+                            guild
+                        )
+
+                        if channel_type == discord.ChannelType.text:
+                            channel = await guild.create_text_channel(
+                                name=channel_data['name'],
+                                category=category,
+                                topic=channel_data.get('topic'),
+                                nsfw=channel_data.get('nsfw', False),
+                                slowmode_delay=channel_data.get('slowmode_delay', 0),
+                                position=channel_data['position'],
+                                overwrites=overwrites
+                            )
+                            
+                            # Restore pins
+                            if 'pins' in channel_data and channel_data['pins']:
+                                pin_logs = await self.restore_pins(
+                                    channel,
+                                    channel_data['pins']
                                 )
-                                await message.pin()
-                                
-                    elif channel_data['type'] == 'voice':
-                        channel = await guild.create_voice_channel(
-                            name=channel_data['name'],
-                            bitrate=channel_data.get('bitrate', 64000),
-                            user_limit=channel_data.get('user_limit', 0),
-                            position=channel_data['position'],
-                            overwrites=overwrites
-                        )
-                    
-                    logs.append(f"Created channel: {channel.name}")
-                    
-                except Exception as e:
-                    logs.append(f"⚠️ Error creating channel {channel_data['name']}: {e}")
+                                logs.extend(pin_logs)
+
+                        elif channel_type == discord.ChannelType.voice:
+                            channel = await guild.create_voice_channel(
+                                name=channel_data['name'],
+                                category=category,
+                                bitrate=channel_data.get('bitrate', 64000),
+                                user_limit=channel_data.get('user_limit', 0),
+                                position=channel_data['position'],
+                                overwrites=overwrites
+                            )
+
+                        logs.append(f"Created channel: {channel.name}")
+
+                    except Exception as e:
+                        logs.append(f"⚠️ Error creating channel {channel_data['name']}: {e}")
 
             # Restore bot settings
             if 'bot_settings' in backup_data:
@@ -255,28 +334,32 @@ class BackupCog(commands.Cog):
 
         return logs
 
-    @app_commands.command(name="draxon-backup", description="Create a backup of the server configuration")
+    @app_commands.command(
+        name="draxon-backup",
+        description="Create a backup of the server configuration"
+    )
     @app_commands.checks.has_role("Chairman")
     async def backup(self, interaction: discord.Interaction):
         """Create a backup of the server"""
         await interaction.response.defer(ephemeral=True)
         
         try:
+            # Create backup
             backup_data = await self.create_backup(interaction.guild)
             
-            # Store backup in Redis with timestamp
-            timestamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-            await self.bot.redis.set(
-                f'backup:{timestamp}',
-                json.dumps(backup_data),
-                ex=86400  # Expire after 24 hours
-            )
-            
-            # Create backup file
+            # Convert to JSON and create file
             backup_json = json.dumps(backup_data, indent=2)
+            timestamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
             file = discord.File(
                 io.StringIO(backup_json),
                 filename=f'draxon_backup_{timestamp}.json'
+            )
+            
+            # Store backup in Redis with timestamp as key
+            await self.bot.redis.set(
+                f'backup:{timestamp}',
+                backup_json,
+                ex=86400  # Expire after 24 hours
             )
             
             await interaction.followup.send(
@@ -292,7 +375,10 @@ class BackupCog(commands.Cog):
                 ephemeral=True
             )
 
-    @app_commands.command(name="draxon-restore", description="Restore server configuration from a backup file")
+    @app_commands.command(
+        name="draxon-restore",
+        description="Restore server configuration from a backup file"
+    )
     @app_commands.checks.has_role("Chairman")
     async def restore(self, interaction: discord.Interaction, backup_file: discord.Attachment):
         """Restore from a backup file"""
@@ -300,12 +386,17 @@ class BackupCog(commands.Cog):
         
         try:
             if not backup_file.filename.endswith('.json'):
-                await interaction.followup.send("❌ Please provide a valid JSON backup file.", ephemeral=True)
+                await interaction.followup.send(
+                    "❌ Please provide a valid JSON backup file.",
+                    ephemeral=True
+                )
                 return
                 
+            # Read and validate backup data
             backup_content = await backup_file.read()
             backup_data = json.loads(backup_content.decode('utf-8'))
             
+            # Confirm with user
             await interaction.followup.send(
                 "⚠️ **Warning**: This will delete all current channels and roles before restoring from backup.\n"
                 "Are you sure you want to proceed? Reply with `yes` to continue.",
@@ -313,14 +404,12 @@ class BackupCog(commands.Cog):
             )
             
             def check(m):
-                return m.author == interaction.user and m.channel == interaction.channel
+                return (m.author == interaction.user and 
+                       m.channel == interaction.channel and 
+                       m.content.lower() == 'yes')
             
             try:
-                msg = await self.bot.wait_for('message', timeout=30.0, check=check)
-                
-                if msg.content.lower() != 'yes':
-                    await interaction.followup.send("❌ Restore cancelled.", ephemeral=True)
-                    return
+                await self.bot.wait_for('message', timeout=30.0, check=check)
                 
                 # Send initial status message
                 status_message = await interaction.followup.send(
@@ -331,7 +420,7 @@ class BackupCog(commands.Cog):
                 # Perform restore
                 logs = await self.restore_backup(interaction.guild, backup_data)
                 
-                # Send logs in chunks
+                # Send logs in chunks due to Discord message length limits
                 log_chunks = [logs[i:i + 10] for i in range(0, len(logs), 10)]
                 for index, chunk in enumerate(log_chunks, 1):
                     await interaction.followup.send(
@@ -340,8 +429,18 @@ class BackupCog(commands.Cog):
                         ephemeral=True
                     )
                 
+                # Save backup to Redis for recovery if needed
+                timestamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                await self.bot.redis.set(
+                    f'restore:{timestamp}',
+                    json.dumps(backup_data),
+                    ex=86400  # Expire after 24 hours
+                )
+                
+                # Final status update
                 await interaction.followup.send(
-                    "✅ Restore process completed! Please verify all channels and roles.",
+                    "✅ Restore process completed! Please verify all channels and roles.\n"
+                    "A backup of the restored configuration has been saved for 24 hours.",
                     ephemeral=True
                 )
                 
@@ -360,6 +459,81 @@ class BackupCog(commands.Cog):
             logger.error(f"Error restoring backup: {e}")
             await interaction.followup.send(
                 f"❌ Error restoring backup: {str(e)}",
+                ephemeral=True
+            )
+
+    @app_commands.command(
+        name="list-backups",
+        description="List available backups"
+    )
+    @app_commands.checks.has_role("Chairman")
+    async def list_backups(self, interaction: discord.Interaction):
+        """List available backups in Redis"""
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # Get all backup keys
+            backup_keys = await self.bot.redis.keys('backup:*')
+            restore_keys = await self.bot.redis.keys('restore:*')
+            
+            if not backup_keys and not restore_keys:
+                await interaction.followup.send(
+                    "No backups found.",
+                    ephemeral=True
+                )
+                return
+                
+            embed = discord.Embed(
+                title="🗄️ Available Backups",
+                color=discord.Color.blue(),
+                timestamp=datetime.datetime.utcnow()
+            )
+            
+            # Add manual backups
+            if backup_keys:
+                backup_list = []
+                for key in backup_keys:
+                    timestamp = key.split(':')[1]
+                    formatted_time = datetime.datetime.strptime(
+                        timestamp,
+                        "%Y%m%d_%H%M%S"
+                    ).strftime("%Y-%m-%d %H:%M:%S")
+                    backup_list.append(f"• {formatted_time}")
+                    
+                embed.add_field(
+                    name="Manual Backups",
+                    value='\n'.join(backup_list) or "None",
+                    inline=False
+                )
+            
+            # Add restore points
+            if restore_keys:
+                restore_list = []
+                for key in restore_keys:
+                    timestamp = key.split(':')[1]
+                    formatted_time = datetime.datetime.strptime(
+                        timestamp,
+                        "%Y%m%d_%H%M%S"
+                    ).strftime("%Y-%m-%d %H:%M:%S")
+                    restore_list.append(f"• {formatted_time}")
+                    
+                embed.add_field(
+                    name="Restore Points",
+                    value='\n'.join(restore_list) or "None",
+                    inline=False
+                )
+            
+            embed.set_footer(text="Backups are automatically deleted after 24 hours")
+            
+            await interaction.followup.send(
+                embed=embed,
+                ephemeral=True
+            )
+            
+        except Exception as e:
+            logger.error(f"Error listing backups: {e}")
+            await interaction.followup.send(
+                "❌ Error retrieving backup list.",
                 ephemeral=True
             )
 
