@@ -11,11 +11,54 @@ from src.utils.logger import setup_logging
 from src.bot.client import DraXonAIBot
 from src.config.settings import Settings
 from src.db.database import init_db, init_redis
-from src.utils.constants import LOG_DIR, APP_VERSION
+from src.utils.constants import LOG_DIR
+
+# Version Information
+APP_VERSION = "1.1.0"
 
 # Initialize logging first
 setup_logging()
 logger = logging.getLogger('DraXon_AI')
+
+def validate_cog_imports(cog_path: str) -> bool:
+    """Validate required imports in a cog before loading"""
+    try:
+        required_imports = {
+            'app_commands': 'from discord import app_commands',
+            'commands': 'from discord.ext import commands',
+            'tasks': 'from discord.ext import tasks',
+            'logging': 'import logging',
+            'typing': 'from typing import'
+        }
+        
+        with open(cog_path, 'r') as f:
+            content = f.read()
+            
+        missing_imports = []
+        for import_name, import_statement in required_imports.items():
+            if import_name not in content and import_statement not in content:
+                missing_imports.append(import_statement)
+                
+        if missing_imports:
+            logger.error(f"Missing required imports in {cog_path}:")
+            for missing in missing_imports:
+                logger.error(f"  - {missing}")
+            return False
+            
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error validating cog {cog_path}: {e}")
+        return False
+
+async def check_required_dirs() -> None:
+    """Ensure all required directories exist"""
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        logger.info("Required directories verified")
+    except Exception as e:
+        logger.error(f"Error creating directories: {e}")
+        raise
 
 async def initialize_services(settings: Settings) -> Tuple[asyncpg.Pool, redis.Redis]:
     """Initialize database and Redis connections"""
@@ -50,7 +93,7 @@ async def cleanup_services(bot: Optional[DraXonAIBot] = None,
             
         if redis_pool:
             logger.info("Closing Redis connection...")
-            await redis_pool.aclose()  # Changed from close() to aclose()
+            await redis_pool.aclose()  # Using aclose() instead of close()
             
         logger.info("All services cleaned up successfully")
     except Exception as e:
@@ -58,7 +101,7 @@ async def cleanup_services(bot: Optional[DraXonAIBot] = None,
 
 async def main() -> None:
     """Main entry point for the DraXon AI bot"""
-    # Initialize logging
+    # Initialize variables
     settings: Optional[Settings] = None
     db_pool: Optional[asyncpg.Pool] = None
     redis_pool: Optional[redis.Redis] = None
@@ -66,6 +109,9 @@ async def main() -> None:
     
     try:
         logger.info(f"Starting DraXon AI Bot v{APP_VERSION}")
+        
+        # Check required directories
+        await check_required_dirs()
         
         # Load and validate settings
         try:
@@ -124,9 +170,6 @@ async def main() -> None:
 
 if __name__ == "__main__":
     try:
-        # Create required directories
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
-        
         # Start the bot
         asyncio.run(main())
         

@@ -1,9 +1,10 @@
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 import logging
+from bs4 import BeautifulSoup
 from datetime import datetime
 from typing import Dict, Optional
-from bs4 import BeautifulSoup
 
 from src.utils.constants import (
     RSI_API,
@@ -118,7 +119,21 @@ class RSIStatusMonitorCog(commands.Cog):
             return
             
         try:
-            # Update status
+            # Update statusimport discord
+from discord import app_commands
+from discord.ext import commands, tasks
+import logging
+from bs4 import BeautifulSoup
+from datetime import datetime
+from typing import Dict, Optional
+
+from src.utils.constants import (
+    RSI_API,
+    STATUS_EMOJIS,
+    CACHE_SETTINGS
+)
+
+logger = logging.getLogger('DraXon_AI')
             current_status = await self.check_status()
             if not current_status:
                 return

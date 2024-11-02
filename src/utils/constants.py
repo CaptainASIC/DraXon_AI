@@ -2,8 +2,8 @@ from pathlib import Path
 from typing import Dict, List
 
 # Version Information
-APP_VERSION = "2.0.0"
-BUILD_DATE = "2024-03"
+APP_VERSION = "2.0.1"
+BUILD_DATE = "2024-11"
 API_VERSION = "v1"
 
 # Project Structure
