@@ -1,5 +1,4 @@
 import discord
-from discord import app_commands
 from discord.ext import commands, tasks
 import logging
 import asyncio
@@ -8,19 +7,20 @@ from typing import List, Dict, Set, Optional, Tuple
 
 from src.utils.constants import (
     ROLE_HIERARCHY,
-    LEADERSHIP_MAX_RANK,
     ROLE_SETTINGS,
     SYSTEM_MESSAGES,
-    CACHE_SETTINGS
+    CACHE_SETTINGS,
+    RSI_API
 )
 
 logger = logging.getLogger('DraXon_AI')
 
 class MembershipMonitorCog(commands.Cog):
-    """Cog for monitoring and managing member roles and verification"""
+    """Monitor and manage member roles and verification"""
     
     def __init__(self, bot):
         self.bot = bot
+        self.last_check = None
         self.daily_checks.start()
         logger.info("Membership monitor initialized")
 
@@ -146,7 +146,7 @@ class MembershipMonitorCog(commands.Cog):
                         is_affiliate = member_data['org_status'] == 'Affiliate'
                         
                         if is_affiliate and current_rank:
-                            max_allowed_index = ROLE_HIERARCHY.index(LEADERSHIP_MAX_RANK)
+                            max_allowed_index = ROLE_HIERARCHY.index(ROLE_SETTINGS['LEADERSHIP_MAX_RANK'])
                             current_index = ROLE_HIERARCHY.index(current_rank)
                             
                             if current_index > max_allowed_index:
@@ -294,6 +294,14 @@ class MembershipMonitorCog(commands.Cog):
         """Run daily membership checks"""
         logger.info("Starting daily membership checks")
         
+        current_time = datetime.utcnow()
+        if self.last_check:
+            time_since_check = (current_time - self.last_check).total_seconds() / 3600
+            if time_since_check < 23:  # Ensure at least 23 hours between checks
+                return
+
+        self.last_check = current_time
+        
         for guild in self.bot.guilds:
             try:
                 logger.info(f"Running checks for guild: {guild.name}")
@@ -318,9 +326,9 @@ class MembershipMonitorCog(commands.Cog):
         """Wait for bot to be ready before starting checks"""
         await self.bot.wait_until_ready()
         
-        # Wait until a reasonable hour to start checks
+        # Wait until configured time
         now = datetime.utcnow()
-        target_hour = 12  # Noon UTC
+        target_hour = int(RSI_API['MAINTENANCE_START'].split(':')[0])
         
         if now.hour >= target_hour:
             tomorrow = now + timedelta(days=1)
@@ -329,28 +337,6 @@ class MembershipMonitorCog(commands.Cog):
             next_run = now.replace(hour=target_hour, minute=0, second=0, microsecond=0)
             
         await discord.utils.sleep_until(next_run)
-
-    @tasks.loop(hours=1)
-    async def cleanup_task(self):
-        """Periodic cleanup of old data"""
-        try:
-            async with self.bot.db.acquire() as conn:
-                # Clean up old role history
-                await conn.execute('''
-                    DELETE FROM role_history 
-                    WHERE timestamp < NOW() - INTERVAL '30 days'
-                ''')
-                
-                # Clean up old verification history
-                await conn.execute('''
-                    DELETE FROM verification_history 
-                    WHERE timestamp < NOW() - INTERVAL '30 days'
-                ''')
-                
-            logger.info("Completed periodic data cleanup")
-            
-        except Exception as e:
-            logger.error(f"Error in cleanup task: {e}")
 
 async def setup(bot):
     """Safe setup function for membership monitor cog"""

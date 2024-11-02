@@ -9,7 +9,8 @@ from datetime import datetime
 from src.utils.constants import (
     ROLE_HIERARCHY,
     ROLE_SETTINGS,
-    SYSTEM_MESSAGES
+    SYSTEM_MESSAGES,
+    CACHE_SETTINGS
 )
 
 logger = logging.getLogger('DraXon_AI')
@@ -30,10 +31,10 @@ class PromotionModal(discord.ui.Modal, title='Member Promotion'):
         )
         
         self.add_item(self.reason)
-        self.cog = None  # Set by the cog when creating the modal
+        self.cog = None
 
     async def on_submit(self, interaction: discord.Interaction):
-        """Handle modal submission"""
+        """Handle promotion modal submission"""
         await interaction.response.defer(ephemeral=True)
         
         try:
@@ -71,10 +72,10 @@ class DemotionModal(discord.ui.Modal, title='Member Demotion'):
         )
         
         self.add_item(self.reason)
-        self.cog = None  # Set by the cog when creating the modal
+        self.cog = None
 
     async def on_submit(self, interaction: discord.Interaction):
-        """Handle modal submission"""
+        """Handle demotion modal submission"""
         await interaction.response.defer(ephemeral=True)
         
         try:
@@ -218,7 +219,7 @@ class RankSelectionView(discord.ui.View):
             child.disabled = True
 
 class PromotionCog(commands.Cog):
-    """Cog for handling member promotions and demotions"""
+    """Handles member promotions and demotions"""
     
     def __init__(self, bot):
         self.bot = bot
@@ -387,7 +388,7 @@ class PromotionCog(commands.Cog):
                 if channel_id:
                     channel = self.bot.get_channel(channel_id)
                     if channel:
-                        # Send fancy announcement
+                        # Send announcement
                         announcement = (
                             self.format_promotion_announcement(member, new_rank, reason)
                             if is_promotion else
@@ -551,18 +552,59 @@ class PromotionCog(commands.Cog):
                 ephemeral=True
             )
 
-    async def cog_command_error(self, interaction: discord.Interaction, 
-                               error: app_commands.AppCommandError):
-        """Handle command errors for this cog"""
-        if isinstance(error, app_commands.errors.MissingRole):
-            await interaction.response.send_message(
-                "❌ You don't have permission to use this command.",
-                ephemeral=True
-            )
-        else:
-            logger.error(f"Command error in {interaction.command.name}: {error}")
-            await interaction.response.send_message(
-                "❌ An error occurred while processing the command.",
+    @app_commands.command(
+        name="rank-history",
+        description="View a member's rank history"
+    )
+    @app_commands.checks.has_any_role("Chairman", "Director")
+    async def rank_history(self, interaction: discord.Interaction, 
+                         member: discord.Member):
+        """View rank history for a member"""
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            async with self.bot.db.acquire() as conn:
+                # Get rank history
+                history = await conn.fetch('''
+                    SELECT old_rank, new_rank, reason, timestamp
+                    FROM role_history
+                    WHERE discord_id = $1
+                    ORDER BY timestamp DESC
+                    LIMIT 10
+                ''', str(member.id))
+                
+                if not history:
+                    await interaction.followup.send(
+                        f"No rank history found for {member.mention}",
+                        ephemeral=True
+                    )
+                    return
+                
+                # Create embed
+                embed = discord.Embed(
+                    title=f"📊 Rank History for {member.display_name}",
+                    color=discord.Color.blue(),
+                    timestamp=datetime.utcnow()
+                )
+                
+                for record in history:
+                    embed.add_field(
+                        name=f"{record['timestamp'].strftime('%Y-%m-%d %H:%M')}",
+                        value=f"From: {record['old_rank'] or 'None'}\n"
+                              f"To: {record['new_rank']}\n"
+                              f"Reason: {record['reason']}",
+                        inline=False
+                    )
+                
+                await interaction.followup.send(
+                    embed=embed,
+                    ephemeral=True
+                )
+                
+        except Exception as e:
+            logger.error(f"Error retrieving rank history: {e}")
+            await interaction.followup.send(
+                "❌ Error retrieving rank history.",
                 ephemeral=True
             )
 
