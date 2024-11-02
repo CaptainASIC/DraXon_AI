@@ -1,8 +1,35 @@
-# requirements.txt
+# Core Dependencies
 discord.py>=2.3.2
+pydantic>=2.6.1
+pydantic-settings>=2.1.0
 python-dotenv>=1.0.0
+
+# Database
+asyncpg>=0.29.0
+SQLAlchemy>=2.0.25
+alembic>=1.13.1
+redis>=5.0.1
+
+# API and Data Processing
+aiohttp>=3.9.1
 feedparser>=6.0.10
-pytz>=2024.1
-requests>=2.31.0
 beautifulsoup4>=4.12.2
+
+# Date/Time Handling
+pytz>=2024.1
+
+# Security and Networking
 certifi>=2024.2.2
+cryptography>=42.0.2
+
+# Monitoring
+prometheus-client>=0.19.0
+sentry-sdk>=1.40.0
+
+# Performance
+uvloop>=0.19.0; sys_platform != 'win32'
+orjson>=3.9.10
+
+# Utilities
+humanize>=4.9.0
+colorlog>=6.8.0
