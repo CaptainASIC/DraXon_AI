@@ -69,19 +69,25 @@ class BackupCog(commands.Cog):
                 'category_id': channel.category.id if channel.category else None
             }
 
+            # Add type-specific data
             if isinstance(channel, discord.TextChannel):
-                base_data.update({
+                text_data = {
                     'topic': channel.topic,
                     'nsfw': channel.nsfw,
                     'slowmode_delay': channel.slowmode_delay,
                     'default_auto_archive_duration': channel.default_auto_archive_duration,
-                    'pins': await self.backup_pins(channel)
-                })
+                }
+                # Get pins separately since it's async
+                pins = await self.backup_pins(channel)
+                text_data['pins'] = pins
+                base_data.update(text_data)
+                
             elif isinstance(channel, discord.VoiceChannel):
-                base_data.update({
+                voice_data = {
                     'bitrate': channel.bitrate,
                     'user_limit': channel.user_limit,
-                })
+                }
+                base_data.update(voice_data)
 
             return base_data
 
