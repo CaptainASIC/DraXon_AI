@@ -20,46 +20,6 @@ APP_VERSION = "1.1.0"
 setup_logging()
 logger = logging.getLogger('DraXon_AI')
 
-def validate_cog_imports(cog_path: str) -> bool:
-    """Validate required imports in a cog before loading"""
-    try:
-        required_imports = {
-            'app_commands': 'from discord import app_commands',
-            'commands': 'from discord.ext import commands',
-            'tasks': 'from discord.ext import tasks',
-            'logging': 'import logging',
-            'typing': 'from typing import'
-        }
-        
-        with open(cog_path, 'r') as f:
-            content = f.read()
-            
-        missing_imports = []
-        for import_name, import_statement in required_imports.items():
-            if import_name not in content and import_statement not in content:
-                missing_imports.append(import_statement)
-                
-        if missing_imports:
-            logger.error(f"Missing required imports in {cog_path}:")
-            for missing in missing_imports:
-                logger.error(f"  - {missing}")
-            return False
-            
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error validating cog {cog_path}: {e}")
-        return False
-
-async def check_required_dirs() -> None:
-    """Ensure all required directories exist"""
-    try:
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
-        logger.info("Required directories verified")
-    except Exception as e:
-        logger.error(f"Error creating directories: {e}")
-        raise
-
 async def initialize_services(settings: Settings) -> Tuple[asyncpg.Pool, redis.Redis]:
     """Initialize database and Redis connections"""
     try:
@@ -99,6 +59,39 @@ async def cleanup_services(bot: Optional[DraXonAIBot] = None,
     except Exception as e:
         logger.error(f"Error during cleanup: {e}")
 
+async def verify_directories() -> None:
+    """Ensure all required directories exist"""
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        logger.info("Required directories verified")
+    except Exception as e:
+        logger.error(f"Error creating directories: {e}")
+        raise
+
+async def verify_env(settings: Settings) -> None:
+    """Verify all required environment variables are set"""
+    try:
+        required_settings = [
+            'discord_token',
+            'postgres_user',
+            'postgres_password',
+            'postgres_db',
+            'rsi_api_key'
+        ]
+        
+        missing = []
+        for setting in required_settings:
+            if not getattr(settings, setting, None):
+                missing.append(setting)
+                
+        if missing:
+            raise ValueError(f"Missing required settings: {', '.join(missing)}")
+            
+        logger.info("Environment validation successful")
+    except Exception as e:
+        logger.error(f"Environment validation failed: {e}")
+        raise
+
 async def main() -> None:
     """Main entry point for the DraXon AI bot"""
     # Initialize variables
@@ -110,12 +103,13 @@ async def main() -> None:
     try:
         logger.info(f"Starting DraXon AI Bot v{APP_VERSION}")
         
-        # Check required directories
-        await check_required_dirs()
+        # Verify directories and environment
+        await verify_directories()
         
         # Load and validate settings
         try:
             settings = Settings()
+            await verify_env(settings)
             logger.info("Settings loaded successfully")
         except Exception as e:
             logger.critical(f"Failed to load settings: {e}")
@@ -137,7 +131,7 @@ async def main() -> None:
             db_pool=db_pool,
             redis_pool=redis_pool,
             ssl_context=ssl_context,
-            settings=settings  # Pass settings to bot for use in cogs
+            settings=settings
         )
         logger.info("Bot initialized")
         

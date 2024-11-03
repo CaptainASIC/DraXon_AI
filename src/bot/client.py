@@ -6,9 +6,13 @@ import asyncpg
 import redis.asyncio as redis
 from typing import Optional, Dict, Any
 import ssl
-import certifi
+from datetime import datetime
 
-from src.utils.constants import APP_VERSION, BOT_REQUIRED_PERMISSIONS
+from src.utils.constants import (
+    APP_VERSION,
+    BOT_REQUIRED_PERMISSIONS,
+    CACHE_SETTINGS
+)
 
 logger = logging.getLogger('DraXon_AI')
 
@@ -19,6 +23,7 @@ class DraXonAIBot(commands.Bot):
                  db_pool: asyncpg.Pool,
                  redis_pool: redis.Redis,
                  ssl_context: Optional[ssl.SSLContext] = None,
+                 settings: Optional[Any] = None,
                  *args, **kwargs):
         """Initialize the bot with database and Redis connections"""
         # Set up intents
@@ -35,10 +40,11 @@ class DraXonAIBot(commands.Bot):
             **kwargs
         )
         
-        # Store connections
+        # Store connections and settings
         self.db = db_pool
         self.redis = redis_pool
         self.ssl_context = ssl_context
+        self.settings = settings
         
         # Internal state
         self._ready = False
@@ -50,24 +56,35 @@ class DraXonAIBot(commands.Bot):
         self.demotion_channel_id: Optional[int] = None
         self.reminder_channel_id: Optional[int] = None
         
+        # Startup timestamp
+        self.start_time = datetime.utcnow()
+        
         logger.info("Bot initialized")
 
     async def setup_hook(self):
         """Initial setup when bot starts"""
         logger.info("Setup hook starting...")
         try:
-            # Define all cogs to load
+            # Load stored channel IDs first
+            await self._load_channel_ids()
+            
+            # Define all cogs to load with dependencies
             cogs = [
-                'src.cogs.channels',
-                'src.cogs.status',
-                'src.cogs.members',
-                'src.cogs.promotion',
-                'src.cogs.commands',
-                'src.cogs.rsi_status_monitor',
-                'src.cogs.rsi_incidents_monitor',
-                'src.cogs.backup',
-                'src.cogs.rsi_integration',
-                'src.cogs.membership_monitor'
+                # Core functionality
+                'src.cogs.channels',      # Channel management
+                'src.cogs.status',        # Status display
+                'src.cogs.members',       # Member management
+                'src.cogs.promotion',     # Role management
+                'src.cogs.commands',      # Command handling
+                
+                # RSI Integration
+                'src.cogs.rsi_status_monitor',    # RSI status tracking
+                'src.cogs.rsi_incidents_monitor', # Incident monitoring
+                'src.cogs.rsi_integration',      # Account linking
+                
+                # Utility
+                'src.cogs.backup',             # Server backup
+                'src.cogs.membership_monitor'   # Member verification
             ]
             
             # Load each cog
@@ -88,9 +105,6 @@ class DraXonAIBot(commands.Bot):
             # Sync command tree
             await self.tree.sync()
             logger.info("Command tree synced")
-            
-            # Load stored channel IDs from Redis
-            await self._load_channel_ids()
             
         except Exception as e:
             logger.error(f"Error in setup_hook: {e}")
@@ -126,15 +140,16 @@ class DraXonAIBot(commands.Bot):
         """Cleanup when bot shuts down"""
         logger.info("Bot shutting down, cleaning up...")
         try:
-            # Save channel IDs before shutdown
+            # Save current state
             await self._save_channel_ids()
             
-            # Close connections
-            if hasattr(self, 'db'):
-                await self.db.close()
-            if hasattr(self, 'redis'):
-                await self.redis.close()
-                
+            # Record shutdown time
+            await self.redis.set(
+                'last_shutdown',
+                datetime.utcnow().isoformat(),
+                ex=CACHE_SETTINGS['STATUS_TTL']
+            )
+            
             await super().close()
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
@@ -154,11 +169,78 @@ class DraXonAIBot(commands.Bot):
             await self.change_presence(activity=activity)
             logger.info("Bot activity status set successfully")
             
-            # Mark as ready
+            # Record ready state
             self._ready = True
+            
+            # Store startup info in Redis
+            startup_info = {
+                'version': APP_VERSION,
+                'start_time': self.start_time.isoformat(),
+                'guilds': len(self.guilds),
+                'ready_time': datetime.utcnow().isoformat()
+            }
+            
+            await self.redis.hmset('bot_info', startup_info)
+            logger.info("Startup info recorded")
             
         except Exception as e:
             logger.error(f"Error in on_ready: {e}")
+
+    async def verify_permissions(self, guild: discord.Guild) -> tuple[bool, list[str]]:
+        """Verify bot has required permissions in guild"""
+        missing_perms = []
+        for perm in BOT_REQUIRED_PERMISSIONS:
+            if not getattr(guild.me.guild_permissions, perm):
+                missing_perms.append(perm)
+        
+        return not bool(missing_perms), missing_perms
+
+    async def get_bot_stats(self) -> Dict[str, Any]:
+        """Get current bot statistics"""
+        try:
+            total_members = sum(len(g.members) for g in self.guilds)
+            bot_members = sum(1 for g in self.guilds for m in g.members if m.bot)
+            
+            return {
+                'version': APP_VERSION,
+                'uptime': (datetime.utcnow() - self.start_time).total_seconds(),
+                'guilds': len(self.guilds),
+                'total_members': total_members,
+                'human_members': total_members - bot_members,
+                'bot_members': bot_members,
+                'cogs_loaded': len(self.cogs),
+                'commands': len(self.tree._global_commands),
+                'latency': self.latency
+            }
+        except Exception as e:
+            logger.error(f"Error getting bot stats: {e}")
+            return {}
+
+    async def on_guild_join(self, guild: discord.Guild):
+        """Handle bot joining a new guild"""
+        # Verify permissions
+        has_perms, missing = await self.verify_permissions(guild)
+        if not has_perms:
+            logger.warning(f"Missing permissions in {guild.name}: {', '.join(missing)}")
+            # Try to notify guild owner
+            try:
+                await guild.owner.send(
+                    f"⚠️ DraXon AI is missing required permissions in {guild.name}:\n"
+                    + "\n".join(f"• {perm}" for perm in missing)
+                )
+            except:
+                pass
+
+        # Log join event
+        logger.info(f"Joined guild: {guild.name} (ID: {guild.id})")
+        
+        # Record in Redis
+        await self.redis.sadd('guilds', str(guild.id))
+
+    async def on_guild_remove(self, guild: discord.Guild):
+        """Handle bot leaving a guild"""
+        logger.info(f"Left guild: {guild.name} (ID: {guild.id})")
+        await self.redis.srem('guilds', str(guild.id))
 
     async def on_command_error(self, ctx, error):
         """Global error handler for commands"""
@@ -184,14 +266,3 @@ class DraXonAIBot(commands.Bot):
                     "❌ An error occurred while processing the command.",
                     ephemeral=True
                 )
-
-    def get_guild_permissions(self, guild: discord.Guild) -> Dict[str, bool]:
-        """Get bot's permissions in a guild"""
-        permissions = guild.me.guild_permissions
-        return {perm: getattr(permissions, perm) for perm in BOT_REQUIRED_PERMISSIONS}
-
-    async def verify_permissions(self, guild: discord.Guild) -> tuple[bool, list[str]]:
-        """Verify bot has required permissions in guild"""
-        permissions = self.get_guild_permissions(guild)
-        missing = [perm for perm, has_perm in permissions.items() if not has_perm]
-        return not bool(missing), missing

@@ -3,33 +3,28 @@ from discord import app_commands
 from discord.ext import commands, tasks
 import logging
 import feedparser
-import aiohttp
 import asyncio
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from bs4 import BeautifulSoup
 
 from src.utils.constants import (
     RSI_API,
     STATUS_EMOJIS,
-    CACHE_SETTINGS
+    CACHE_SETTINGS,
+    SYSTEM_MESSAGES
 )
 
 logger = logging.getLogger('DraXon_AI')
 
 class RSIIncidentMonitorCog(commands.Cog):
-    """Monitor RSI platform incidents and status"""
+    """Monitor and report RSI service incidents"""
     
     def __init__(self, bot):
         self.bot = bot
         self.last_incident_guid = None
         self.max_retries = 3
         self.timeout = 10
-        self.system_statuses = {
-            'platform': 'operational',
-            'persistent-universe': 'operational',
-            'electronic-access': 'operational'
-        }
         self.check_incidents_task.start()
         logger.info("RSI Incident Monitor initialized")
 
@@ -37,28 +32,31 @@ class RSIIncidentMonitorCog(commands.Cog):
         """Clean up when cog is unloaded"""
         self.check_incidents_task.cancel()
 
-    async def make_request(self, url: str) -> Optional[str]:
-        """Make HTTP request with retries and timeout"""
+    async def make_request(self) -> Optional[str]:
+        """Make HTTP request with retries and error handling"""
         for attempt in range(self.max_retries):
             try:
-                async with self.bot.session.get(url, timeout=self.timeout) as response:
+                async with self.bot.session.get(
+                    RSI_API['FEED_URL'],
+                    timeout=self.timeout
+                ) as response:
                     if response.status == 200:
                         return await response.text()
-                    
-                    logger.warning(f"Request failed with status {response.status}")
+                        
+                    logger.warning(f"Request attempt {attempt + 1} failed: {response.status}")
                     
             except asyncio.TimeoutError:
                 logger.warning(f"Request timeout (attempt {attempt + 1}/{self.max_retries})")
             except Exception as e:
                 logger.error(f"Request error: {e}")
-            
+                
             if attempt < self.max_retries - 1:
                 await asyncio.sleep(2 ** attempt)  # Exponential backoff
-        
+                
         return None
 
     def clean_html_content(self, html_content: str) -> str:
-        """Clean and format HTML content"""
+        """Clean and format HTML content for Discord"""
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
             formatted_text = []
@@ -69,12 +67,14 @@ class RSIIncidentMonitorCog(commands.Cog):
                 if not text:
                     continue
                     
-                if text.startswith('[20'):  # Date headers
+                # Check if this is a date header
+                if text.startswith('[20'):  # Date headers like [2024-10-26 Updates]
                     if current_section:
                         formatted_text.append('\n'.join(current_section))
                         current_section = []
                     formatted_text.append(f"\n**{text}**")
                 else:
+                    # Clean up UTC timestamps
                     if ' UTC - ' in text:
                         time, message = text.split(' UTC - ', 1)
                         text = f"`{time} UTC` - {message}"
@@ -139,26 +139,24 @@ class RSIIncidentMonitorCog(commands.Cog):
     async def check_maintenance_window(self) -> bool:
         """Check if currently in maintenance window"""
         try:
-            current_time = datetime.utcnow()
+            now = datetime.utcnow().time()
             maintenance_start = datetime.strptime(
                 RSI_API['MAINTENANCE_START'], 
                 "%H:%M"
             ).time()
             
+            # Calculate end time
             maintenance_end = (
-                datetime.combine(current_time.date(), maintenance_start) + 
+                datetime.combine(datetime.utcnow().date(), maintenance_start) +
                 timedelta(hours=RSI_API['MAINTENANCE_DURATION'])
             ).time()
             
-            current_time = current_time.time()
-            
-            # Handle maintenance window crossing midnight
+            # Handle window crossing midnight
             if maintenance_end < maintenance_start:
-                return (current_time >= maintenance_start or 
-                       current_time <= maintenance_end)
+                return (now >= maintenance_start or now <= maintenance_end)
             
-            return maintenance_start <= current_time <= maintenance_end
-            
+            return maintenance_start <= now <= maintenance_end
+
         except Exception as e:
             logger.error(f"Error checking maintenance window: {e}")
             return False
@@ -171,13 +169,13 @@ class RSIIncidentMonitorCog(commands.Cog):
                 logger.info("Currently in maintenance window, skipping check")
                 return None
 
-            # Check Redis cache
+            # Check Redis cache first
             cached = await self.bot.redis.get('latest_incident')
             if cached:
-                return eval(cached)  # Convert string representation back to dict
+                return json.loads(cached)
 
-            # Fetch from RSS feed
-            content = await self.make_request(RSI_API['FEED_URL'])
+            # Fetch from feed
+            content = await self.make_request()
             if not content:
                 return None
 
@@ -185,22 +183,21 @@ class RSIIncidentMonitorCog(commands.Cog):
             if not feed.entries:
                 return None
 
+            # Process latest entry
             latest = feed.entries[0]
-            
-            # Parse incident data
             incident = {
-                'id': latest.guid,
+                'guid': latest.guid,
                 'title': latest.title,
                 'description': latest.description,
                 'link': latest.link,
                 'timestamp': datetime.now(),
                 'components': [
-                    cat.term for cat in getattr(latest, 'tags', [])
-                    if cat.term not in STATUS_EMOJIS
+                    tag.term for tag in getattr(latest, 'tags', [])
+                    if tag.term not in STATUS_EMOJIS
                 ],
                 'status': next(
-                    (cat.term for cat in getattr(latest, 'tags', [])
-                     if cat.term in STATUS_EMOJIS),
+                    (tag.term for tag in getattr(latest, 'tags', [])
+                     if tag.term in STATUS_EMOJIS),
                     'unknown'
                 )
             }
@@ -208,62 +205,35 @@ class RSIIncidentMonitorCog(commands.Cog):
             # Cache the incident
             await self.bot.redis.set(
                 'latest_incident',
-                str(incident),
+                json.dumps(incident),
                 ex=CACHE_SETTINGS['STATUS_TTL']
             )
+            
+            # Store in history
+            await self.store_incident_history(incident)
 
             return incident
 
         except Exception as e:
-            logger.error(f"Error fetching latest incident: {e}")
+            logger.error(f"Error getting latest incident: {e}")
             return None
 
-    async def check_system_status(self) -> Dict[str, str]:
-        """Check current system status"""
+    async def store_incident_history(self, incident: Dict[str, Any]) -> None:
+        """Store incident in database for history"""
         try:
-            content = await self.make_request(RSI_API['STATUS_URL'])
-            if not content:
-                return self.system_statuses
-
-            soup = BeautifulSoup(content, 'html.parser')
-            status_changed = False
-
-            for component in soup.find_all('div', class_='component'):
-                name = component.find('span', class_='name').text.strip().lower()
-                status = component.find('span', class_='component-status')
-                
-                if not status:
-                    continue
-                    
-                status = status.get('data-status', 'unknown')
-                
-                # Map component to our tracking
-                if 'platform' in name:
-                    if self.system_statuses['platform'] != status:
-                        status_changed = True
-                    self.system_statuses['platform'] = status
-                elif 'persistent universe' in name:
-                    if self.system_statuses['persistent-universe'] != status:
-                        status_changed = True
-                    self.system_statuses['persistent-universe'] = status
-                elif 'arena commander' in name:
-                    if self.system_statuses['electronic-access'] != status:
-                        status_changed = True
-                    self.system_statuses['electronic-access'] = status
-
-            if status_changed:
-                # Update Redis cache
-                await self.bot.redis.hmset(
-                    'system_status',
-                    self.system_statuses
+            async with self.bot.db.acquire() as conn:
+                await conn.execute('''
+                    INSERT INTO incident_history (
+                        guid, title, description, status, 
+                        components, link, timestamp
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ''', incident['guid'], incident['title'], 
+                    incident['description'], incident['status'],
+                    json.dumps(incident['components']), incident['link'],
+                    incident['timestamp']
                 )
-                logger.info(f"Status changed: {self.system_statuses}")
-
-            return self.system_statuses
-
         except Exception as e:
-            logger.error(f"Error checking system status: {e}")
-            return self.system_statuses
+            logger.error(f"Error storing incident history: {e}")
 
     @tasks.loop(minutes=5)
     async def check_incidents_task(self):
@@ -272,18 +242,15 @@ class RSIIncidentMonitorCog(commands.Cog):
             return
 
         try:
-            # Update system status
-            await self.check_system_status()
-
             # Check for new incidents
             incident = await self.get_latest_incident()
-            if not incident or incident['id'] == self.last_incident_guid:
+            if not incident or incident['guid'] == self.last_incident_guid:
                 return
 
-            self.last_incident_guid = incident['id']
+            self.last_incident_guid = incident['guid']
             logger.info(f"New incident detected: {incident['title']}")
             
-            # Get the notification channel
+            # Get notification channel
             channel = self.bot.get_channel(self.bot.incidents_channel_id)
             if not channel:
                 logger.error("Incidents channel not found")
@@ -291,12 +258,17 @@ class RSIIncidentMonitorCog(commands.Cog):
 
             # Create and send embed
             embed = self.create_incident_embed(incident)
-            await channel.send(
-                content="@everyone New RSI Status Update:",
-                embed=embed
-            )
             
-            # Update Redis
+            # Add mentions based on severity
+            content = "@everyone" if "major" in incident['title'].lower() else None
+            
+            message = await channel.send(content=content, embed=embed)
+            
+            # Pin major incidents
+            if "major" in incident['title'].lower():
+                await message.pin()
+                
+            # Store in Redis for quick access
             await self.bot.redis.set('last_incident_id', self.last_incident_guid)
             logger.info(f"Posted new incident: {incident['title']}")
 
@@ -310,18 +282,85 @@ class RSIIncidentMonitorCog(commands.Cog):
         
         # Restore last incident ID from Redis
         self.last_incident_guid = await self.bot.redis.get('last_incident_id')
-        
-        # Restore system status from Redis
-        cached_status = await self.bot.redis.hgetall('system_status')
-        if cached_status:
-            self.system_statuses.update(cached_status)
 
     @check_incidents_task.after_loop
     async def after_incidents_check(self):
         """Cleanup after incident check loop ends"""
         if self.last_incident_guid:
             await self.bot.redis.set('last_incident_id', self.last_incident_guid)
-        await self.bot.redis.hmset('system_status', self.system_statuses)
+
+    @app_commands.command(
+        name="incidents",
+        description="View recent RSI incidents"
+    )
+    async def view_incidents(self, interaction: discord.Interaction):
+        """View recent incidents command"""
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # Get recent incidents from database
+            async with self.bot.db.acquire() as conn:
+                incidents = await conn.fetch('''
+                    SELECT * FROM incident_history
+                    ORDER BY timestamp DESC
+                    LIMIT 5
+                ''')
+                
+            if not incidents:
+                await interaction.followup.send(
+                    "No recent incidents found.",
+                    ephemeral=True
+                )
+                return
+                
+            # Create embed for each incident
+            embeds = []
+            for incident in incidents:
+                embed = discord.Embed(
+                    title=incident['title'],
+                    description=self.clean_html_content(incident['description']),
+                    color=(discord.Color.green() if 'resolved' in incident['title'].lower()
+                          else discord.Color.red() if 'major' in incident['title'].lower()
+                          else discord.Color.orange() if 'partial' in incident['title'].lower()
+                          else discord.Color.blue()),
+                    timestamp=incident['timestamp']
+                )
+                
+                if incident['status']:
+                    embed.add_field(
+                        name="Status",
+                        value=f"{STATUS_EMOJIS.get(incident['status'], '❓')} {incident['status'].title()}",
+                        inline=False
+                    )
+                    
+                if components := json.loads(incident['components']):
+                    embed.add_field(
+                        name="🎯 Affected Systems",
+                        value="\n".join(f"- {component}" for component in components),
+                        inline=False
+                    )
+                    
+                if incident['link']:
+                    embed.add_field(
+                        name="📑 More Information",
+                        value=f"[View on RSI Status Page]({incident['link']})",
+                        inline=False
+                    )
+                    
+                embeds.append(embed)
+                
+            await interaction.followup.send(
+                content="Recent RSI Incidents:",
+                embeds=embeds,
+                ephemeral=True
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in view_incidents command: {e}")
+            await interaction.followup.send(
+                "❌ Error retrieving incidents.",
+                ephemeral=True
+            )
 
 async def setup(bot):
     """Safe setup function for RSI incidents monitor cog"""

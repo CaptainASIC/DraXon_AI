@@ -4,15 +4,17 @@ from discord.ext import commands
 import logging
 import aiohttp
 import json
-from typing import Dict, List, Optional, Any
 import io
-from datetime import datetime, timedelta
+from datetime import datetime
+from typing import Dict, List, Optional, Any
+import asyncio
 
 from src.utils.constants import (
     RSI_API,
     COMPARE_STATUS,
     CACHE_SETTINGS,
-    SYSTEM_MESSAGES
+    SYSTEM_MESSAGES,
+    ROLE_SETTINGS
 )
 
 logger = logging.getLogger('DraXon_AI')
@@ -30,7 +32,7 @@ class LinkAccountModal(discord.ui.Modal, title='Link RSI Account'):
         self.cog = None
 
     async def on_submit(self, interaction: discord.Interaction):
-        """Handle modal submission"""
+        """Handle account linking modal submission"""
         await interaction.response.defer(ephemeral=True)
         
         try:
@@ -84,32 +86,75 @@ class RSIIntegrationCog(commands.Cog):
     async def check_maintenance_window(self) -> bool:
         """Check if currently in maintenance window"""
         try:
-            current_time = datetime.utcnow()
+            now = datetime.utcnow().time()
             maintenance_start = datetime.strptime(
                 RSI_API['MAINTENANCE_START'], 
                 "%H:%M"
             ).time()
             
+            # Calculate end time
             maintenance_end = (
-                datetime.combine(current_time.date(), maintenance_start) + 
+                datetime.combine(datetime.utcnow().date(), maintenance_start) +
                 timedelta(hours=RSI_API['MAINTENANCE_DURATION'])
             ).time()
             
-            current_time = current_time.time()
-            
-            # Handle maintenance window crossing midnight
+            # Handle window crossing midnight
             if maintenance_end < maintenance_start:
-                return (current_time >= maintenance_start or 
-                       current_time <= maintenance_end)
+                return (now >= maintenance_start or now <= maintenance_end)
             
-            return maintenance_start <= current_time <= maintenance_end
-            
+            return maintenance_start <= now <= maintenance_end
+
         except Exception as e:
             logger.error(f"Error checking maintenance window: {e}")
             return False
 
+    async def make_api_request(self, endpoint: str, params: Optional[Dict] = None) -> Optional[Dict]:
+        """Make request to RSI API with retries and caching"""
+        cache_key = f"rsi_api:{endpoint}:{json.dumps(params or {})}"
+        
+        try:
+            # Check cache first
+            cached = await self.bot.redis.get(cache_key)
+            if cached:
+                return json.loads(cached)
+
+            # Make API request with retries
+            url = f"{RSI_API['BASE_URL']}/{RSI_API['VERSION']}/{RSI_API['MODE']}/{endpoint}"
+            
+            for attempt in range(3):
+                try:
+                    async with self.bot.session.get(url, params=params) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            
+                            # Cache successful response
+                            await self.bot.redis.set(
+                                cache_key,
+                                json.dumps(data),
+                                ex=CACHE_SETTINGS['API_TTL']
+                            )
+                            
+                            return data
+                        elif response.status == 429:  # Rate limit
+                            retry_after = int(response.headers.get('Retry-After', 60))
+                            await asyncio.sleep(retry_after)
+                        else:
+                            logger.error(f"API request failed: {response.status}")
+                            await asyncio.sleep(2 ** attempt)
+                            
+                except Exception as e:
+                    logger.error(f"Request attempt {attempt + 1} failed: {e}")
+                    if attempt < 2:  # Don't sleep on last attempt
+                        await asyncio.sleep(2 ** attempt)
+            
+            return None
+
+        except Exception as e:
+            logger.error(f"Error making API request: {e}")
+            return None
+
     async def get_user_info(self, handle: str) -> Optional[Dict[str, Any]]:
-        """Fetch user information from RSI API"""
+        """Get user information from RSI API"""
         try:
             # Check Redis cache first
             cache_key = f'rsi_user:{handle.lower()}'
@@ -117,31 +162,28 @@ class RSIIntegrationCog(commands.Cog):
             if cached:
                 return json.loads(cached)
 
-            # Fetch from API
-            url = f"{RSI_API['BASE_URL']}/{RSI_API['VERSION']}/{RSI_API['MODE']}/user/{handle}"
-            async with self.bot.session.get(url) as response:
-                if response.status != 200:
-                    return None
-                    
-                data = await response.json()
-                if not data.get('success'):
-                    return None
+            # Make API request
+            response = await self.make_api_request(f"user/{handle}")
+            if not response or not response.get('success'):
+                return None
 
-                # Cache the result
-                await self.bot.redis.set(
-                    cache_key,
-                    json.dumps(data['data']),
-                    ex=CACHE_SETTINGS['MEMBER_DATA_TTL']
-                )
-                
-                return data['data']
+            data = response['data']
+            
+            # Cache the result
+            await self.bot.redis.set(
+                cache_key,
+                json.dumps(data),
+                ex=CACHE_SETTINGS['MEMBER_DATA_TTL']
+            )
+            
+            return data
 
         except Exception as e:
             logger.error(f"Error fetching user info: {e}")
             return None
 
     async def get_org_members(self) -> List[Dict[str, Any]]:
-        """Fetch organization members from RSI API"""
+        """Get all organization members from RSI API"""
         try:
             # Check Redis cache
             cache_key = f'org_members:{RSI_API["ORGANIZATION_SID"]}'
@@ -153,26 +195,22 @@ class RSIIntegrationCog(commands.Cog):
             page = 1
             
             while True:
-                url = (f"{RSI_API['BASE_URL']}/{RSI_API['VERSION']}/"
-                      f"{RSI_API['MODE']}/organization_members/"
-                      f"{RSI_API['ORGANIZATION_SID']}")
-                
                 params = {'page': page}
+                data = await self.make_api_request(
+                    f"organization_members/{RSI_API['ORGANIZATION_SID']}",
+                    params
+                )
                 
-                async with self.bot.session.get(url, params=params) as response:
-                    if response.status != 200:
-                        break
-                        
-                    data = await response.json()
-                    if not data.get('success') or not data.get('data'):
-                        break
-                        
-                    members.extend(data['data'])
+                if not data or not data.get('data'):
+                    break
+
+                members.extend(data['data'])
+                
+                if len(data['data']) < RSI_API['MEMBERS_PER_PAGE']:
+                    break
                     
-                    if len(data['data']) < RSI_API['MEMBERS_PER_PAGE']:
-                        break
-                        
-                    page += 1
+                page += 1
+                await asyncio.sleep(1)  # Rate limiting
 
             # Cache the results
             if members:
@@ -304,83 +342,19 @@ class RSIIntegrationCog(commands.Cog):
                 inline=False
             )
 
-            # Send response
+            # Cache member data
+            await self.bot.redis.set(
+                f'member:{interaction.user.id}',
+                json.dumps(rsi_data),
+                ex=CACHE_SETTINGS['MEMBER_DATA_TTL']
+            )
+
             await interaction.followup.send(embed=embed, ephemeral=True)
             return True
 
         except Exception as e:
             logger.error(f"Error processing account link: {e}")
             return False
-
-    async def create_comparison_file(self, 
-                                   guild: discord.Guild,
-                                   org_members: List[Dict[str, Any]]) -> discord.File:
-        """Create detailed comparison report"""
-        try:
-            org_by_handle = {m['handle'].lower(): m for m in org_members}
-            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-            
-            # Create comparison table
-            lines = [
-                "Status | Discord ID | Discord Name | RSI Handle | RSI Display | "
-                "Stars | Org Status | Last Updated"
-            ]
-            lines.append("-" * 140)
-
-            async with self.bot.db.acquire() as conn:
-                for member in guild.members:
-                    if member.bot:
-                        continue
-
-                    # Get member data from database
-                    member_data = await conn.fetchrow(
-                        'SELECT * FROM rsi_members WHERE discord_id = $1',
-                        str(member.id)
-                    )
-                    
-                    if member_data:
-                        handle = member_data['handle']
-                        org_member = org_by_handle.get(handle.lower())
-                        
-                        status = (
-                            COMPARE_STATUS['match'] if org_member 
-                            else COMPARE_STATUS['missing']
-                        )
-                        display = (
-                            org_member['display'] if org_member 
-                            else member_data['display_name']
-                        )
-                        stars = (
-                            str(org_member['stars']) if org_member 
-                            else str(member_data['org_stars'])
-                        )
-                        org_status = member_data['org_status']
-                        last_updated = member_data['last_updated'].strftime("%Y-%m-%d %H:%M")
-                    else:
-                        status = COMPARE_STATUS['missing']
-                        handle = 'N/A'
-                        display = 'N/A'
-                        stars = 'N/A'
-                        org_status = 'N/A'
-                        last_updated = 'Never'
-                    
-                    lines.append(
-                        f"{status} | {member.id} | {member.name} | {handle} | "
-                        f"{display} | {stars} | {org_status} | {last_updated}"
-                    )
-
-            # Create file
-            content = '\n'.join(lines)
-            file = discord.File(
-                io.StringIO(content),
-                filename=f'draxon_comparison_{timestamp}.txt'
-            )
-            
-            return file
-
-        except Exception as e:
-            logger.error(f"Error creating comparison file: {e}")
-            raise
 
     @app_commands.command(
         name="draxon-link",
@@ -436,7 +410,10 @@ class RSIIntegrationCog(commands.Cog):
 
             # Create member table
             timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-            lines = ["Discord ID | Discord Name | RSI Display | RSI Handle | Stars | Status | Rank | Roles"]
+            lines = [
+                "Discord ID | Discord Name | RSI Display | RSI Handle | "
+                "Stars | Status | Rank | Roles"
+            ]
             lines.append("-" * 140)
 
             # Sort by stars (descending)
@@ -534,7 +511,7 @@ class RSIIntegrationCog(commands.Cog):
     )
     @app_commands.checks.has_role("Chairman")
     async def compare_members(self, interaction: discord.Interaction):
-        """Command to compare Discord and Org members"""
+        """Compare Discord and Org members"""
         await interaction.response.defer(ephemeral=True)
 
         try:
@@ -548,9 +525,61 @@ class RSIIntegrationCog(commands.Cog):
                 return
 
             # Create comparison file
-            file = await self.create_comparison_file(
-                interaction.guild,
-                org_members
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            lines = [
+                "Status | Discord ID | Discord Name | RSI Handle | RSI Display | "
+                "Stars | Org Status | Last Updated"
+            ]
+            lines.append("-" * 140)
+
+            org_by_handle = {m['handle'].lower(): m for m in org_members}
+            
+            async with self.bot.db.acquire() as conn:
+                for member in interaction.guild.members:
+                    if member.bot:
+                        continue
+                        
+                    # Get member data from database
+                    member_data = await conn.fetchrow('''
+                        SELECT * FROM rsi_members 
+                        WHERE discord_id = $1
+                    ''', str(member.id))
+                    
+                    if member_data:
+                        handle = member_data['handle']
+                        org_member = org_by_handle.get(handle.lower())
+                        
+                        status = (
+                            COMPARE_STATUS['match'] if org_member 
+                            else COMPARE_STATUS['missing']
+                        )
+                        display = (
+                            org_member['display'] if org_member 
+                            else member_data['display_name']
+                        )
+                        stars = (
+                            str(org_member['stars']) if org_member 
+                            else str(member_data['org_stars'])
+                        )
+                        org_status = member_data['org_status']
+                        last_updated = member_data['last_updated'].strftime("%Y-%m-%d %H:%M")
+                    else:
+                        status = COMPARE_STATUS['missing']
+                        handle = 'N/A'
+                        display = 'N/A'
+                        stars = 'N/A'
+                        org_status = 'N/A'
+                        last_updated = 'Never'
+                    
+                    lines.append(
+                        f"{status} | {member.id} | {member.name} | {handle} | "
+                        f"{display} | {stars} | {org_status} | {last_updated}"
+                    )
+
+            # Create comparison file
+            file = discord.File(
+                io.StringIO('\n'.join(lines)),
+                filename=f'draxon_comparison_{timestamp}.txt'
             )
 
             # Create summary embed
@@ -561,29 +590,20 @@ class RSIIntegrationCog(commands.Cog):
             )
 
             # Calculate statistics
-            async with self.bot.db.acquire() as conn:
-                total_discord = len([
-                    m for m in interaction.guild.members 
-                    if not m.bot
-                ])
-                
-                total_linked = await conn.fetchval(
-                    'SELECT COUNT(*) FROM rsi_members'
-                )
-                
-                total_org = len(org_members)
-                
-                # Find mismatches
-                discord_handles = set()
-                org_handles = {m['handle'].lower() for m in org_members}
-                
-                member_data = await conn.fetch('SELECT handle FROM rsi_members')
-                for data in member_data:
-                    if data['handle']:
-                        discord_handles.add(data['handle'].lower())
-                
-                missing_from_discord = len(org_handles - discord_handles)
-                missing_from_org = len(discord_handles - org_handles)
+            total_discord = len([m for m in interaction.guild.members if not m.bot])
+            total_linked = await conn.fetchval('SELECT COUNT(*) FROM rsi_members')
+            total_org = len(org_members)
+            
+            discord_handles = set()
+            org_handles = {m['handle'].lower() for m in org_members}
+            
+            member_data = await conn.fetch('SELECT handle FROM rsi_members')
+            for data in member_data:
+                if data['handle']:
+                    discord_handles.add(data['handle'].lower())
+            
+            missing_from_discord = len(org_handles - discord_handles)
+            missing_from_org = len(discord_handles - org_handles)
 
             # Add statistics to embed
             embed.add_field(
@@ -622,18 +642,42 @@ class RSIIntegrationCog(commands.Cog):
                 ephemeral=True
             )
 
-    async def cog_command_error(self, interaction: discord.Interaction, 
-                               error: app_commands.AppCommandError):
-        """Handle errors in cog commands"""
-        if isinstance(error, app_commands.errors.MissingRole):
-            await interaction.response.send_message(
-                "❌ You don't have permission to use this command.",
+    @app_commands.command(
+        name="draxon-refresh",
+        description="Refresh RSI organization data"
+    )
+    @app_commands.checks.has_role("Chairman")
+    async def refresh_org_data(self, interaction: discord.Interaction):
+        """Force refresh of organization data"""
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # Clear caches
+            await self.bot.redis.delete(f'org_members:{RSI_API["ORGANIZATION_SID"]}')
+            pattern = f'rsi_user:*'
+            keys = await self.bot.redis.keys(pattern)
+            if keys:
+                await self.bot.redis.delete(*keys)
+                
+            # Fetch fresh data
+            org_members = await self.get_org_members()
+            if not org_members:
+                await interaction.followup.send(
+                    "❌ Failed to fetch organization data.",
+                    ephemeral=True
+                )
+                return
+                
+            await interaction.followup.send(
+                f"✅ Successfully refreshed organization data.\n"
+                f"Total Members: {len(org_members)}",
                 ephemeral=True
             )
-        else:
-            logger.error(f"Command error: {error}")
-            await interaction.response.send_message(
-                "❌ An error occurred while processing the command.",
+            
+        except Exception as e:
+            logger.error(f"Error refreshing org data: {e}")
+            await interaction.followup.send(
+                "❌ An error occurred while refreshing data.",
                 ephemeral=True
             )
 
