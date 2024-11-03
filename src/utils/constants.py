@@ -112,8 +112,10 @@ STATUS_EMOJIS = {
     'degraded': '⚠️',
     'partial': '⚠️',
     'major': '❌',
-    'maintenance': '🔧'
+    'maintenance': '🔧',
+    'unknown': '❓'
 }
+
 
 COMPARE_STATUS = {
     'match': '✅',      # Member found in both Discord and RSI
@@ -137,6 +139,7 @@ RSI_API = {
 # Cache Settings
 CACHE_SETTINGS = {
     'STATUS_TTL': 300,            # 5 minutes
+    'API_TTL': 3600,              # 1 hour
     'MEMBER_DATA_TTL': 3600,      # 1 hour
     'ORG_DATA_TTL': 7200,         # 2 hours
     'VERIFICATION_TTL': 86400     # 24 hours

@@ -4,8 +4,10 @@ from discord.ext import commands, tasks
 import logging
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 import asyncio
+import json
+import aiohttp
 
 from src.utils.constants import (
     RSI_API,
@@ -25,38 +27,45 @@ class RSIStatusMonitorCog(commands.Cog):
             'persistent-universe': 'operational',
             'electronic-access': 'operational'
         }
+        self.last_check = None
         self.check_status_task.start()
         logger.info("RSI Status Monitor initialized")
 
     def cog_unload(self):
         """Clean up when cog is unloaded"""
-        self.check_status_task.cancel()
+        try:
+            self.check_status_task.cancel()
+            logger.info("Status monitor tasks cancelled")
+        except Exception as e:
+            logger.error(f"Error unloading status monitor: {e}")
 
-    async def make_request(self, max_retries: int = 3, timeout: int = 30) -> Optional[str]:
+    async def make_request(self, url: str = None, timeout: int = 30) -> Optional[str]:
         """Make HTTP request with retries and error handling"""
-        if not self.bot.session:
+        if not hasattr(self.bot, 'session') or not self.bot.session:
             logger.error("HTTP session not initialized")
             return None
 
-        for attempt in range(max_retries):
+        request_url = url or RSI_API['STATUS_URL']
+        
+        for attempt in range(3):  # 3 retries
             try:
                 async with self.bot.session.get(
-                    RSI_API['STATUS_URL'],
+                    request_url,
                     timeout=timeout
                 ) as response:
                     if response.status == 200:
                         return await response.text()
-                        
-                    logger.warning(f"Request attempt {attempt + 1} failed: {response.status}")
-                    
+                    logger.warning(f"Request to {request_url} failed with status {response.status}")
             except asyncio.TimeoutError:
-                logger.warning(f"Request timeout (attempt {attempt + 1}/{max_retries})")
+                logger.warning(f"Request timeout on attempt {attempt + 1}")
+            except aiohttp.ClientError as e:
+                logger.error(f"HTTP client error: {str(e)}")
             except Exception as e:
-                logger.error(f"Request error on attempt {attempt + 1}: {e}")
-                
-            if attempt < max_retries - 1:
+                logger.error(f"Unexpected error making request: {str(e)}")
+            
+            if attempt < 2:  # Don't sleep on last attempt
                 await asyncio.sleep(2 ** attempt)  # Exponential backoff
-                
+        
         return None
 
     async def check_maintenance_window(self) -> bool:
@@ -64,17 +73,15 @@ class RSIStatusMonitorCog(commands.Cog):
         try:
             now = datetime.utcnow().time()
             maintenance_start = datetime.strptime(
-                RSI_API['MAINTENANCE_START'],
+                RSI_API['MAINTENANCE_START'], 
                 "%H:%M"
             ).time()
             
-            # Calculate end time
             maintenance_end = (
                 datetime.combine(datetime.utcnow().date(), maintenance_start) +
                 timedelta(hours=RSI_API['MAINTENANCE_DURATION'])
             ).time()
             
-            # Handle window crossing midnight
             if maintenance_end < maintenance_start:
                 return (now >= maintenance_start or now <= maintenance_end)
             
@@ -87,26 +94,22 @@ class RSIStatusMonitorCog(commands.Cog):
     async def check_status(self) -> Optional[Dict[str, str]]:
         """Check current system status"""
         try:
-            # Check Redis cache first
-            cached = await self.bot.redis.hgetall('system_status')
+            # Check cache first
+            cached = await self.bot.redis.get('system_status')
             if cached:
-                self.system_statuses.update({k.decode(): v.decode() for k, v in cached.items()})
+                self.system_statuses = json.loads(cached)
                 return self.system_statuses
 
             # Check maintenance window
             if await self.check_maintenance_window():
-                logger.info("Currently in maintenance window, using default status")
                 for key in self.system_statuses:
                     self.system_statuses[key] = 'maintenance'
                 return self.system_statuses
 
-            # Make request
             content = await self.make_request()
             if not content:
-                logger.error("Failed to fetch status page")
                 return None
 
-            # Parse status page
             soup = BeautifulSoup(content, 'html.parser')
             status_changed = False
 
@@ -120,7 +123,6 @@ class RSIStatusMonitorCog(commands.Cog):
                 name = name.text.strip().lower()
                 status = status.get('data-status', 'unknown')
                 
-                # Map component to our tracking
                 if 'platform' in name:
                     if self.system_statuses['platform'] != status:
                         status_changed = True
@@ -135,30 +137,41 @@ class RSIStatusMonitorCog(commands.Cog):
                     self.system_statuses['electronic-access'] = status
 
             if status_changed:
-                # Update Redis cache
-                await self.bot.redis.hmset(
+                # Cache the new status
+                await self.bot.redis.set(
                     'system_status',
-                    self.system_statuses
-                )
-                await self.bot.redis.expire(
-                    'system_status',
-                    CACHE_SETTINGS['STATUS_TTL']
+                    json.dumps(self.system_statuses),
+                    ex=CACHE_SETTINGS['STATUS_TTL']
                 )
                 
+                # Record the status change
+                await self.record_status_change()
                 logger.info(f"Status changed: {self.system_statuses}")
-
-                # Log the status change
-                await self.bot.redis.lpush(
-                    'status_history',
-                    f"{datetime.utcnow().isoformat()}:{str(self.system_statuses)}"
-                )
-                await self.bot.redis.ltrim('status_history', 0, 99)  # Keep last 100 changes
 
             return self.system_statuses
 
         except Exception as e:
-            logger.error(f"Error checking status: {e}")
+            logger.error(f"Error checking status: {str(e)}")
             return None
+
+    async def record_status_change(self):
+        """Record status change in history"""
+        try:
+            timestamp = datetime.utcnow().isoformat()
+            history_entry = {
+                'timestamp': timestamp,
+                'statuses': self.system_statuses.copy()
+            }
+            
+            await self.bot.redis.lpush(
+                'status_history',
+                json.dumps(history_entry)
+            )
+            
+            # Keep last 100 entries
+            await self.bot.redis.ltrim('status_history', 0, 99)
+        except Exception as e:
+            logger.error(f"Error recording status change: {e}")
 
     def format_status_embed(self) -> discord.Embed:
         """Format current status for Discord embed"""
@@ -170,62 +183,92 @@ class RSIStatusMonitorCog(commands.Cog):
             )
             
             for system, status in self.system_statuses.items():
-                emoji = STATUS_EMOJIS.get(status, '❓')
+                emoji = STATUS_EMOJIS.get(status, STATUS_EMOJIS['unknown'])
                 system_name = system.replace('-', ' ').title()
                 embed.add_field(
                     name=system_name,
                     value=f"{emoji} {status.title()}",
                     inline=False
                 )
-                
-            embed.set_footer(text="Last updated")
-            return embed
             
+            if self.last_check:
+                embed.set_footer(text=f"Last checked: {self.last_check.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+            
+            return embed
         except Exception as e:
             logger.error(f"Error formatting status embed: {e}")
             raise
+
+    async def update_status_channels(self, guild: discord.Guild):
+        """Update status display channels"""
+        try:
+            channels_cog = self.bot.get_cog('ChannelsCog')
+            if not channels_cog:
+                return
+
+            category = await channels_cog.get_category(guild)
+            if not category:
+                return
+
+            for channel in category.voice_channels:
+                if channel.name.lower().endswith('status'):
+                    status_type = next(
+                        (s for s in self.system_statuses.keys() 
+                         if s in channel.name.lower()),
+                        None
+                    )
+                    if status_type:
+                        status = self.system_statuses[status_type]
+                        emoji = STATUS_EMOJIS.get(status, STATUS_EMOJIS['unknown'])
+                        new_name = f"{emoji} {channel.name.split()[0]}"
+                        
+                        if channel.name != new_name:
+                            try:
+                                await channel.edit(name=new_name)
+                                logger.info(f"Updated status channel: {new_name}")
+                            except Exception as e:
+                                logger.error(f"Error updating channel {channel.name}: {e}")
+
+        except Exception as e:
+            logger.error(f"Error updating status channels: {e}")
 
     @tasks.loop(minutes=5)
     async def check_status_task(self):
         """Check status periodically"""
         if not self.bot.is_ready():
             return
-            
-        try:
-            # Update status
-            current_status = await self.check_status()
-            if not current_status:
-                return
 
-            # Check if status cog needs updating
-            status_cog = self.bot.get_cog('StatusCog')
-            if status_cog:
-                await status_cog.update_status_channels(current_status)
+        try:
+            current_status = await self.check_status()
+            if current_status:
+                self.last_check = datetime.utcnow()
+                
+                # Update status channels in all guilds
+                for guild in self.bot.guilds:
+                    await self.update_status_channels(guild)
 
         except Exception as e:
             logger.error(f"Error in status check task: {e}")
 
     @check_status_task.before_loop
     async def before_status_check(self):
-        """Wait for bot to be ready before starting checks"""
+        """Setup before starting the status check loop"""
         await self.bot.wait_until_ready()
-        
-        # Restore cached status
-        try:
-            cached = await self.bot.redis.hgetall('system_status')
-            if cached:
-                self.system_statuses.update({k.decode(): v.decode() for k, v in cached.items()})
-        except Exception as e:
-            logger.error(f"Error restoring cached status: {e}")
+        logger.info("Starting status check loop")
 
     @check_status_task.after_loop
     async def after_status_check(self):
         """Cleanup after status check loop ends"""
         try:
-            await self.bot.redis.hmset('system_status', self.system_statuses)
-            logger.info("Final status state saved")
+            if self.system_statuses:
+                await self.bot.redis.set(
+                    'system_status',
+                    json.dumps(self.system_statuses),
+                    ex=CACHE_SETTINGS['STATUS_TTL']
+                )
+            logger.info("Status check loop ended")
         except Exception as e:
-            logger.error(f"Error saving final status state: {e}")
+            logger.error(f"Error in status check cleanup: {e}")
 
     @app_commands.command(
         name="check-status",
@@ -237,33 +280,80 @@ class RSIStatusMonitorCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         
         try:
-            # Check maintenance window
             if await self.check_maintenance_window():
                 await interaction.followup.send(
-                    content="⚠️ RSI systems are currently in maintenance window.\n"
-                           f"Maintenance period: {RSI_API['MAINTENANCE_START']} UTC "
-                           f"for {RSI_API['MAINTENANCE_DURATION']} hours.",
+                    "⚠️ RSI systems are currently in maintenance window.\n"
+                    f"Maintenance period: {RSI_API['MAINTENANCE_START']} UTC "
+                    f"for {RSI_API['MAINTENANCE_DURATION']} hours.",
                     ephemeral=True
                 )
                 return
 
-            # Force status check
             current_status = await self.check_status()
+            
             if not current_status:
                 await interaction.followup.send(
-                    "❌ Unable to fetch system status. Please try again later.",
+                    "Unable to fetch system status. Please try again later.",
                     ephemeral=True
                 )
                 return
             
-            # Create and send embed
             embed = self.format_status_embed()
             await interaction.followup.send(embed=embed, ephemeral=True)
             
         except Exception as e:
             logger.error(f"Error in check_status command: {e}")
             await interaction.followup.send(
-                "❌ An error occurred while checking system status.",
+                "An error occurred while checking the status.",
+                ephemeral=True
+            )
+
+    @app_commands.command(
+        name="status-history",
+        description="View RSI status change history"
+    )
+    async def status_history_command(self, interaction: discord.Interaction):
+        """View status change history"""
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            history = await self.bot.redis.lrange('status_history', 0, 9)  # Get last 10 changes
+            
+            if not history:
+                await interaction.followup.send(
+                    "No status change history available.",
+                    ephemeral=True
+                )
+                return
+            
+            embed = discord.Embed(
+                title="📊 RSI Status History",
+                color=discord.Color.blue(),
+                timestamp=datetime.utcnow()
+            )
+            
+            for entry in history:
+                data = json.loads(entry)
+                timestamp = datetime.fromisoformat(data['timestamp'])
+                statuses = data['statuses']
+                
+                status_text = "\n".join(
+                    f"{STATUS_EMOJIS.get(status, '❓')} {system.replace('-', ' ').title()}: {status.title()}"
+                    for system, status in statuses.items()
+                )
+                
+                embed.add_field(
+                    name=timestamp.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    value=status_text,
+                    inline=False
+                )
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            logger.error(f"Error in status history command: {e}")
+            await interaction.followup.send(
+                "An error occurred while fetching status history.",
                 ephemeral=True
             )
 
@@ -278,10 +368,11 @@ class RSIStatusMonitorCog(commands.Cog):
             )
         else:
             logger.error(f"Command error: {error}")
-            await interaction.response.send_message(
-                "❌ An error occurred while processing the command.",
-                ephemeral=True
-            )
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "An error occurred while processing the command.",
+                    ephemeral=True
+                )
 
 async def setup(bot):
     """Safe setup function for RSI status monitor cog"""
