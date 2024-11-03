@@ -16,8 +16,7 @@ import asyncio
 from src.utils.constants import (
     COMPARE_STATUS,
     CACHE_SETTINGS,
-    SYSTEM_MESSAGES,
-    ROLE_SETTINGS
+    SYSTEM_MESSAGES
 )
 from src.config.settings import get_settings
 
@@ -45,17 +44,6 @@ class LinkAccountModal(discord.ui.Modal, title='Link RSI Account'):
                 
             logger.info(f"Processing RSI handle link: {self.handle.value}")
             
-            # Check maintenance window
-            if await self.cog.check_maintenance_window():
-                await interaction.followup.send(
-                    SYSTEM_MESSAGES['MAINTENANCE'].format(
-                        start_time=self.cog.settings.maintenance_start,
-                        duration=self.cog.settings.maintenance_duration
-                    ),
-                    ephemeral=True
-                )
-                return
-
             # Get user info
             user_info = await self.cog.get_user_info(self.handle.value)
             if not user_info:
@@ -88,31 +76,6 @@ class RSIIntegrationCog(commands.Cog):
         self.settings = get_settings()
         logger.info("RSI Integration cog initialized")
 
-    async def check_maintenance_window(self) -> bool:
-        """Check if currently in maintenance window"""
-        try:
-            now = datetime.utcnow().time()
-            maintenance_start = datetime.strptime(
-                self.settings.maintenance_start, 
-                "%H:%M"
-            ).time()
-            
-            # Calculate end time
-            maintenance_end = (
-                datetime.combine(datetime.utcnow().date(), maintenance_start) +
-                timedelta(hours=self.settings.maintenance_duration)
-            ).time()
-            
-            # Handle window crossing midnight
-            if maintenance_end < maintenance_start:
-                return (now >= maintenance_start or now <= maintenance_end)
-            
-            return maintenance_start <= now <= maintenance_end
-
-        except Exception as e:
-            logger.error(f"Error checking maintenance window: {e}")
-            return False
-
     async def make_api_request(self, endpoint: str, params: Optional[Dict] = None) -> Optional[Dict]:
         """Make request to RSI API with retries and caching"""
         cache_key = f"rsi_api:{endpoint}:{json.dumps(params or {})}"
@@ -123,24 +86,16 @@ class RSIIntegrationCog(commands.Cog):
             if cached:
                 return json.loads(cached)
 
-            # Make API request with retries
-            base_url = self.settings.rsi_api_base_url
-            version = self.settings.api_version
-            mode = self.settings.api_mode
-            url = f"{base_url}/{version}/{mode}/{endpoint}"
-            
-            # Add API key to params
-            request_params = params or {}
-            request_params['apikey'] = self.settings.rsi_api_key
+            # Construct URL with API key in path
+            url = f"{self.settings.rsi_api_base_url}/{self.settings.rsi_api_key}/v1/{self.settings.api_mode}/{endpoint}"
             
             logger.info(f"Making API request to: {url}")
-            logger.debug(f"Using API key: {self.settings.rsi_api_key[:5]}...")  # Log first 5 chars for debugging
             
             for attempt in range(3):
                 try:
-                    async with self.bot.session.get(url, params=request_params) as response:
+                    async with self.bot.session.get(url, params=params) as response:
                         response_text = await response.text()
-                        logger.debug(f"API Response: {response_text}")  # Log full response for debugging
+                        logger.debug(f"API Response: {response_text}")
                         
                         if response.status == 200:
                             try:
@@ -180,6 +135,36 @@ class RSIIntegrationCog(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error making API request: {e}")
+            return None
+
+    async def get_org_info(self) -> Optional[Dict[str, Any]]:
+        """Get organization information"""
+        try:
+            # Check Redis cache first
+            cache_key = f'org_info:{self.settings.rsi_organization_sid}'
+            cached = await self.bot.redis.get(cache_key)
+            if cached:
+                return json.loads(cached)
+
+            # Make API request
+            response = await self.make_api_request(f"organization/{self.settings.rsi_organization_sid}")
+            if not response or not response.get('success'):
+                logger.error(f"Failed to get org info: {response}")
+                return None
+
+            data = response['data']
+            
+            # Cache the result
+            await self.bot.redis.set(
+                cache_key,
+                json.dumps(data),
+                ex=CACHE_SETTINGS['ORG_DATA_TTL']
+            )
+            
+            return data
+
+        except Exception as e:
+            logger.error(f"Error fetching org info: {e}")
             return None
 
     async def get_user_info(self, handle: str) -> Optional[Dict[str, Any]]:
@@ -448,6 +433,16 @@ class RSIIntegrationCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         try:
+            # Get org info first
+            org_info = await self.get_org_info()
+            if not org_info:
+                await interaction.followup.send(
+                    "❌ Failed to fetch organization data.",
+                    ephemeral=True
+                )
+                return
+
+            # Get members
             members = await self.get_org_members()
             if not members:
                 await interaction.followup.send(
@@ -502,10 +497,17 @@ class RSIIntegrationCog(commands.Cog):
 
             # Create summary embed
             embed = discord.Embed(
-                title="📊 Organization Member Summary",
+                title=f"📊 {org_info['name']} Member Summary",
+                description=f"Organization SID: {org_info['sid']}\n"
+                           f"Total Members: {org_info['members']}\n"
+                           f"Primary Focus: {org_info['focus']['primary']['name']}\n"
+                           f"Secondary Focus: {org_info['focus']['secondary']['name']}",
                 color=discord.Color.blue(),
                 timestamp=datetime.utcnow()
             )
+
+            if org_info.get('banner'):
+                embed.set_image(url=org_info['banner'])
 
             # Add statistics
             total_members = len(members)
@@ -702,22 +704,32 @@ class RSIIntegrationCog(commands.Cog):
         try:
             # Clear caches
             await self.bot.redis.delete(f'org_members:{self.settings.rsi_organization_sid}')
+            await self.bot.redis.delete(f'org_info:{self.settings.rsi_organization_sid}')
             pattern = f'rsi_user:*'
             keys = await self.bot.redis.keys(pattern)
             if keys:
                 await self.bot.redis.delete(*keys)
                 
             # Fetch fresh data
+            org_info = await self.get_org_info()
+            if not org_info:
+                await interaction.followup.send(
+                    "❌ Failed to fetch organization data.",
+                    ephemeral=True
+                )
+                return
+
             org_members = await self.get_org_members()
             if not org_members:
                 await interaction.followup.send(
-                    "❌ Failed to fetch organization data.",
+                    "❌ Failed to fetch organization members.",
                     ephemeral=True
                 )
                 return
                 
             await interaction.followup.send(
                 f"✅ Successfully refreshed organization data.\n"
+                f"Organization: {org_info['name']}\n"
                 f"Total Members: {len(org_members)}",
                 ephemeral=True
             )
