@@ -11,10 +11,7 @@ from src.utils.logger import setup_logging
 from src.bot.client import DraXonAIBot
 from src.config.settings import Settings
 from src.db.database import init_db, init_redis
-from src.utils.constants import LOG_DIR
-
-# Version Information
-APP_VERSION = "1.1.0"
+from src.utils.constants import LOG_DIR, APP_VERSION
 
 # Initialize logging first
 setup_logging()

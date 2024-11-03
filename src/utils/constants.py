@@ -161,6 +161,21 @@ CHANNEL_PERMISSIONS = {
     }
 }
 
+# Bot Configuration
+BOT_REQUIRED_PERMISSIONS = [
+    'view_channel',
+    'manage_channels',
+    'manage_roles',
+    'send_messages',
+    'read_message_history',
+    'create_private_threads',
+    'read_messages',
+    'move_members',
+    'manage_messages',
+    'attach_files',
+    'send_messages_in_threads'
+]
+
 # Path Configuration
 from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
