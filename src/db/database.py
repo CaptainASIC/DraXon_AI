@@ -8,11 +8,12 @@ from sqlalchemy.orm import sessionmaker
 
 from src.utils.constants import DB_SETTINGS
 from src.config.settings import get_settings
+from .init_schema import init_database
 
 logger = logging.getLogger('DraXon_AI')
 
 async def init_db(database_url: str) -> asyncpg.Pool:
-    """Initialize PostgreSQL connection pool"""
+    """Initialize PostgreSQL connection pool and create tables"""
     try:
         # Create the connection pool
         pool = await asyncpg.create_pool(
@@ -29,6 +30,60 @@ async def init_db(database_url: str) -> asyncpg.Pool:
         # Test the connection
         async with pool.acquire() as conn:
             await conn.execute('SELECT 1')
+            
+            # Create tables if they don't exist
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS rsi_members (
+                    discord_id TEXT PRIMARY KEY,
+                    handle TEXT,
+                    sid TEXT,
+                    display_name TEXT,
+                    enlisted TEXT,
+                    org_status TEXT,
+                    org_rank TEXT,
+                    org_stars INTEGER,
+                    verified BOOLEAN DEFAULT FALSE,
+                    last_updated TIMESTAMP WITH TIME ZONE,
+                    raw_data JSONB
+                )
+            ''')
+            
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS verification_history (
+                    id SERIAL PRIMARY KEY,
+                    discord_id TEXT,
+                    action TEXT,
+                    status BOOLEAN,
+                    timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    details JSONB
+                )
+            ''')
+            
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS role_history (
+                    id SERIAL PRIMARY KEY,
+                    discord_id TEXT,
+                    old_rank TEXT,
+                    new_rank TEXT,
+                    reason TEXT,
+                    timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS incident_history (
+                    id SERIAL PRIMARY KEY,
+                    guid TEXT UNIQUE,
+                    title TEXT,
+                    description TEXT,
+                    status TEXT,
+                    components TEXT[],
+                    timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    raw_data JSONB
+                )
+            ''')
+            
+            logger.info("Database tables created/verified successfully")
         
         logger.info("Database pool initialized successfully")
         return pool

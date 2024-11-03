@@ -20,6 +20,7 @@ from src.utils.constants import (
     SYSTEM_MESSAGES,
     ROLE_SETTINGS
 )
+from src.config.settings import get_settings
 
 logger = logging.getLogger('DraXon_AI')
 
@@ -85,6 +86,7 @@ class RSIIntegrationCog(commands.Cog):
     
     def __init__(self, bot):
         self.bot = bot
+        self.settings = get_settings()
         logger.info("RSI Integration cog initialized")
 
     async def check_maintenance_window(self) -> bool:
@@ -126,14 +128,23 @@ class RSIIntegrationCog(commands.Cog):
             url = f"{RSI_API['BASE_URL']}/{RSI_API['VERSION']}/{RSI_API['MODE']}/{endpoint}"
             logger.info(f"Making API request to: {url}")
             
+            # Add API key to params
+            request_params = params or {}
+            request_params['apikey'] = self.settings.rsi_api_key
+            
             for attempt in range(3):
                 try:
-                    async with self.bot.session.get(url, params=params) as response:
+                    async with self.bot.session.get(url, params=request_params) as response:
                         response_text = await response.text()
                         if response.status == 200:
                             try:
                                 data = json.loads(response_text)
                                 
+                                # Check if API request was successful
+                                if not data.get('success'):
+                                    logger.error(f"API request unsuccessful: {data}")
+                                    return None
+
                                 # Cache successful response
                                 await self.bot.redis.set(
                                     cache_key,
