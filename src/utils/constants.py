@@ -92,6 +92,20 @@ CHANNELS_CONFIG = [
     }
 ]
 
+# Channel Settings
+CHANNEL_SETTINGS = {
+    'CATEGORY_NAME': 'DraXon AI',  # Name of the category for bot channels
+    'REFRESH_INTERVAL': 300,       # Channel refresh interval in seconds (5 minutes)
+    'MAX_RETRIES': 3,             # Maximum retries for channel operations
+    'RETRY_DELAY': 5,             # Delay between retries in seconds
+    'VOICE_BITRATE': 64000,       # Default bitrate for voice channels
+    'USER_LIMIT': 0,              # Default user limit (0 = unlimited)
+    'POSITION_START': 1,          # Starting position for channels in category
+    'POSITION_INCREMENT': 1,      # Position increment for each channel
+    'SYNC_PERMISSIONS': True,     # Whether to sync permissions with category
+    'CLEANUP_OLD_CHANNELS': True  # Whether to clean up old/duplicate channels
+}
+
 # Status Configuration
 STATUS_EMOJIS = {
     'operational': '✅',
