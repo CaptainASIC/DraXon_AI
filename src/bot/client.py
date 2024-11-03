@@ -310,4 +310,3 @@ class DraXonAIBot(commands.Bot):
                     )
         except Exception as e:
             logger.error(f"Error handling app command error: {e}")
-}
