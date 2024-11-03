@@ -14,7 +14,6 @@ from typing import Dict, List, Optional, Any
 import asyncio
 
 from src.utils.constants import (
-    RSI_API,
     COMPARE_STATUS,
     CACHE_SETTINGS,
     SYSTEM_MESSAGES,
@@ -50,8 +49,8 @@ class LinkAccountModal(discord.ui.Modal, title='Link RSI Account'):
             if await self.cog.check_maintenance_window():
                 await interaction.followup.send(
                     SYSTEM_MESSAGES['MAINTENANCE'].format(
-                        start_time=RSI_API['MAINTENANCE_START'],
-                        duration=RSI_API['MAINTENANCE_DURATION']
+                        start_time=self.cog.settings.maintenance_start,
+                        duration=self.cog.settings.maintenance_duration
                     ),
                     ephemeral=True
                 )
@@ -94,14 +93,14 @@ class RSIIntegrationCog(commands.Cog):
         try:
             now = datetime.utcnow().time()
             maintenance_start = datetime.strptime(
-                RSI_API['MAINTENANCE_START'], 
+                self.settings.maintenance_start, 
                 "%H:%M"
             ).time()
             
             # Calculate end time
             maintenance_end = (
                 datetime.combine(datetime.utcnow().date(), maintenance_start) +
-                timedelta(hours=RSI_API['MAINTENANCE_DURATION'])
+                timedelta(hours=self.settings.maintenance_duration)
             ).time()
             
             # Handle window crossing midnight
@@ -125,17 +124,24 @@ class RSIIntegrationCog(commands.Cog):
                 return json.loads(cached)
 
             # Make API request with retries
-            url = f"{RSI_API['BASE_URL']}/{RSI_API['VERSION']}/{RSI_API['MODE']}/{endpoint}"
-            logger.info(f"Making API request to: {url}")
+            base_url = self.settings.rsi_api_base_url
+            version = self.settings.api_version
+            mode = self.settings.api_mode
+            url = f"{base_url}/{version}/{mode}/{endpoint}"
             
             # Add API key to params
             request_params = params or {}
             request_params['apikey'] = self.settings.rsi_api_key
             
+            logger.info(f"Making API request to: {url}")
+            logger.debug(f"Using API key: {self.settings.rsi_api_key[:5]}...")  # Log first 5 chars for debugging
+            
             for attempt in range(3):
                 try:
                     async with self.bot.session.get(url, params=request_params) as response:
                         response_text = await response.text()
+                        logger.debug(f"API Response: {response_text}")  # Log full response for debugging
+                        
                         if response.status == 200:
                             try:
                                 data = json.loads(response_text)
@@ -214,7 +220,7 @@ class RSIIntegrationCog(commands.Cog):
         """Get all organization members from RSI API"""
         try:
             # Check Redis cache
-            cache_key = f'org_members:{RSI_API["ORGANIZATION_SID"]}'
+            cache_key = f'org_members:{self.settings.rsi_organization_sid}'
             cached = await self.bot.redis.get(cache_key)
             if cached:
                 return json.loads(cached)
@@ -225,7 +231,7 @@ class RSIIntegrationCog(commands.Cog):
             while True:
                 params = {'page': page}
                 data = await self.make_api_request(
-                    f"organization_members/{RSI_API['ORGANIZATION_SID']}",
+                    f"organization_members/{self.settings.rsi_organization_sid}",
                     params
                 )
                 
@@ -242,7 +248,7 @@ class RSIIntegrationCog(commands.Cog):
 
                 members.extend(data['data'])
                 
-                if len(data['data']) < RSI_API['MEMBERS_PER_PAGE']:
+                if len(data['data']) < 32:  # RSI API returns 32 members per page
                     break
                     
                 page += 1
@@ -282,9 +288,9 @@ class RSIIntegrationCog(commands.Cog):
                 return False
 
             # Check DraXon membership
-            is_main_org = main_org.get('sid') == RSI_API['ORGANIZATION_SID']
+            is_main_org = main_org.get('sid') == self.settings.rsi_organization_sid
             is_affiliate = any(
-                org.get('sid') == RSI_API['ORGANIZATION_SID'] 
+                org.get('sid') == self.settings.rsi_organization_sid 
                 for org in affiliations
             )
 
@@ -300,7 +306,7 @@ class RSIIntegrationCog(commands.Cog):
             draxon_org = (
                 main_org if is_main_org else 
                 next(org for org in affiliations 
-                     if org.get('sid') == RSI_API['ORGANIZATION_SID'])
+                     if org.get('sid') == self.settings.rsi_organization_sid)
             )
 
             # Prepare data for storage
@@ -341,7 +347,10 @@ class RSIIntegrationCog(commands.Cog):
                             verified = EXCLUDED.verified,
                             last_updated = EXCLUDED.last_updated,
                             raw_data = EXCLUDED.raw_data
-                    ''', *rsi_data.values())
+                    ''', str(interaction.user.id), rsi_data['handle'], rsi_data['sid'],
+                        rsi_data['display_name'], rsi_data['enlisted'], rsi_data['org_status'],
+                        rsi_data['org_rank'], rsi_data['org_stars'], rsi_data['verified'],
+                        rsi_data['last_updated'], json.dumps(rsi_data['raw_data']))
 
                     # Log verification
                     await conn.execute('''
@@ -692,7 +701,7 @@ class RSIIntegrationCog(commands.Cog):
         
         try:
             # Clear caches
-            await self.bot.redis.delete(f'org_members:{RSI_API["ORGANIZATION_SID"]}')
+            await self.bot.redis.delete(f'org_members:{self.settings.rsi_organization_sid}')
             pattern = f'rsi_user:*'
             keys = await self.bot.redis.keys(pattern)
             if keys:
