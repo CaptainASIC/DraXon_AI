@@ -1,13 +1,20 @@
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 import logging
 from typing import Dict, Optional
+from datetime import datetime
+from bs4 import BeautifulSoup
 
 from src.utils.constants import (
     CHANNELS_CONFIG,
     STATUS_EMOJIS,
-    CACHE_SETTINGS
+    CACHE_SETTINGS,
+    RSI_API
 )
 
 logger = logging.getLogger('DraXon_AI')
