@@ -7,6 +7,8 @@ import redis.asyncio as redis
 from typing import Optional, Dict, Any
 import ssl
 from datetime import datetime
+import aiohttp
+import json
 
 from src.utils.constants import (
     APP_VERSION,
@@ -46,6 +48,9 @@ class DraXonAIBot(commands.Bot):
         self.ssl_context = ssl_context
         self.settings = settings
         
+        # Initialize session as None (will be set in setup_hook)
+        self.session: Optional[aiohttp.ClientSession] = None
+        
         # Internal state
         self._ready = False
         self._cogs_loaded = False
@@ -65,6 +70,13 @@ class DraXonAIBot(commands.Bot):
         """Initial setup when bot starts"""
         logger.info("Setup hook starting...")
         try:
+            # Initialize aiohttp session with SSL context if provided
+            if self.ssl_context:
+                self.session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=self.ssl_context))
+            else:
+                self.session = aiohttp.ClientSession()
+            logger.info("HTTP session initialized")
+            
             # Load stored channel IDs first
             await self._load_channel_ids()
             
@@ -115,10 +127,11 @@ class DraXonAIBot(commands.Bot):
         try:
             channel_ids = await self.redis.hgetall('channel_ids')
             if channel_ids:
-                self.incidents_channel_id = int(channel_ids.get(b'incidents', 0)) or None
-                self.promotion_channel_id = int(channel_ids.get(b'promotion', 0)) or None
-                self.demotion_channel_id = int(channel_ids.get(b'demotion', 0)) or None
-                self.reminder_channel_id = int(channel_ids.get(b'reminder', 0)) or None
+                # Convert bytes to int, handling both string and bytes keys
+                self.incidents_channel_id = int(channel_ids.get(b'incidents', channel_ids.get('incidents', 0))) or None
+                self.promotion_channel_id = int(channel_ids.get(b'promotion', channel_ids.get('promotion', 0))) or None
+                self.demotion_channel_id = int(channel_ids.get(b'demotion', channel_ids.get('demotion', 0))) or None
+                self.reminder_channel_id = int(channel_ids.get(b'reminder', channel_ids.get('reminder', 0))) or None
                 logger.info("Loaded channel IDs from Redis")
         except Exception as e:
             logger.error(f"Error loading channel IDs: {e}")
@@ -126,12 +139,13 @@ class DraXonAIBot(commands.Bot):
     async def _save_channel_ids(self):
         """Save channel IDs to Redis"""
         try:
-            await self.redis.hmset('channel_ids', {
+            channel_data = {
                 'incidents': str(self.incidents_channel_id or 0),
                 'promotion': str(self.promotion_channel_id or 0),
                 'demotion': str(self.demotion_channel_id or 0),
                 'reminder': str(self.reminder_channel_id or 0)
-            })
+            }
+            await self.redis.hmset('channel_ids', channel_data)
             logger.info("Saved channel IDs to Redis")
         except Exception as e:
             logger.error(f"Error saving channel IDs: {e}")
@@ -140,6 +154,11 @@ class DraXonAIBot(commands.Bot):
         """Cleanup when bot shuts down"""
         logger.info("Bot shutting down, cleaning up...")
         try:
+            # Close aiohttp session
+            if self.session and not self.session.closed:
+                await self.session.close()
+                logger.info("HTTP session closed")
+            
             # Save current state
             await self._save_channel_ids()
             
@@ -149,6 +168,10 @@ class DraXonAIBot(commands.Bot):
                 datetime.utcnow().isoformat(),
                 ex=CACHE_SETTINGS['STATUS_TTL']
             )
+            
+            # Save bot statistics
+            stats = await self.get_bot_stats()
+            await self.redis.hmset('bot_stats', {k: str(v) for k, v in stats.items()})
             
             await super().close()
         except Exception as e:
@@ -163,9 +186,7 @@ class DraXonAIBot(commands.Bot):
         logger.info(f'DraXon AI Bot v{APP_VERSION} has connected to Discord!')
         try:
             # Set custom activity
-            activity = discord.CustomActivity(
-                name=f"Ver. {APP_VERSION} Processing..."
-            )
+            activity = discord.CustomActivity(name=f"Ver. {APP_VERSION} Processing...")
             await self.change_presence(activity=activity)
             logger.info("Bot activity status set successfully")
             
@@ -218,51 +239,74 @@ class DraXonAIBot(commands.Bot):
 
     async def on_guild_join(self, guild: discord.Guild):
         """Handle bot joining a new guild"""
-        # Verify permissions
-        has_perms, missing = await self.verify_permissions(guild)
-        if not has_perms:
-            logger.warning(f"Missing permissions in {guild.name}: {', '.join(missing)}")
-            # Try to notify guild owner
-            try:
-                await guild.owner.send(
-                    f"⚠️ DraXon AI is missing required permissions in {guild.name}:\n"
-                    + "\n".join(f"• {perm}" for perm in missing)
-                )
-            except:
-                pass
+        try:
+            # Verify permissions
+            has_perms, missing = await self.verify_permissions(guild)
+            if not has_perms:
+                logger.warning(f"Missing permissions in {guild.name}: {', '.join(missing)}")
+                # Try to notify guild owner
+                try:
+                    await guild.owner.send(
+                        f"⚠️ DraXon AI is missing required permissions in {guild.name}:\n"
+                        + "\n".join(f"• {perm}" for perm in missing)
+                    )
+                except Exception as e:
+                    logger.error(f"Could not notify guild owner: {e}")
 
-        # Log join event
-        logger.info(f"Joined guild: {guild.name} (ID: {guild.id})")
-        
-        # Record in Redis
-        await self.redis.sadd('guilds', str(guild.id))
+            # Log join event
+            logger.info(f"Joined guild: {guild.name} (ID: {guild.id})")
+            
+            # Record in Redis
+            await self.redis.sadd('guilds', str(guild.id))
+            
+            # Initialize guild setup
+            channels_cog = self.get_cog('ChannelsCog')
+            if channels_cog:
+                await channels_cog.setup_guild(guild)
+                
+        except Exception as e:
+            logger.error(f"Error handling guild join: {e}")
 
     async def on_guild_remove(self, guild: discord.Guild):
         """Handle bot leaving a guild"""
-        logger.info(f"Left guild: {guild.name} (ID: {guild.id})")
-        await self.redis.srem('guilds', str(guild.id))
+        try:
+            logger.info(f"Left guild: {guild.name} (ID: {guild.id})")
+            await self.redis.srem('guilds', str(guild.id))
+            
+            # Clean up guild data
+            await self.redis.delete(f'guild_config:{guild.id}')
+            logger.info(f"Cleaned up data for guild: {guild.id}")
+            
+        except Exception as e:
+            logger.error(f"Error handling guild remove: {e}")
 
     async def on_command_error(self, ctx, error):
         """Global error handler for commands"""
-        if isinstance(error, commands.errors.MissingRole):
-            await ctx.send("❌ You don't have permission to use this command.")
-        else:
-            logger.error(f"Command error: {error}")
-            await ctx.send("❌ An error occurred while processing the command.")
+        try:
+            if isinstance(error, commands.errors.MissingRole):
+                await ctx.send("❌ You don't have permission to use this command.")
+            else:
+                logger.error(f"Command error: {error}")
+                await ctx.send("❌ An error occurred while processing the command.")
+        except Exception as e:
+            logger.error(f"Error handling command error: {e}")
 
     async def on_app_command_error(self, 
                                  interaction: discord.Interaction, 
                                  error: app_commands.AppCommandError):
         """Global error handler for application commands"""
-        if isinstance(error, app_commands.errors.MissingRole):
-            await interaction.response.send_message(
-                "❌ You don't have permission to use this command.",
-                ephemeral=True
-            )
-        else:
-            logger.error(f"Application command error: {error}")
-            if not interaction.response.is_done():
+        try:
+            if isinstance(error, app_commands.errors.MissingRole):
                 await interaction.response.send_message(
-                    "❌ An error occurred while processing the command.",
+                    "❌ You don't have permission to use this command.",
                     ephemeral=True
                 )
+            else:
+                logger.error(f"Application command error: {error}")
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "❌ An error occurred while processing the command.",
+                        ephemeral=True
+                    )
+        except Exception as e:
+            logger.error(f"Error handling app command error: {e}")
