@@ -1,5 +1,5 @@
 # Version info
-APP_VERSION = "2.0.1"
+APP_VERSION = "2.0.2"
 BUILD_DATE = "Nov 2024"
 
 # Role Configuration
