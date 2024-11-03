@@ -98,4 +98,28 @@ class VerificationHistory(Base, TimestampMixin):
             'timestamp': self.timestamp.isoformat() if self.timestamp else None
         }
 
+class IncidentHistory(Base, TimestampMixin):
+    """RSI Incident history"""
+    __tablename__ = 'incident_history'
+    
+    guid = Column(String, primary_key=True)
+    title = Column(String, nullable=False)
+    description = Column(Text)
+    status = Column(String)
+    components = Column(JSONB)
+    link = Column(String)
+    timestamp = Column(DateTime(timezone=True), nullable=False)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert incident to dictionary"""
+        return {
+            'guid': self.guid,
+            'title': self.title,
+            'description': self.description,
+            'status': self.status,
+            'components': self.components,
+            'link': self.link,
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None
+        }
+
 # Indices and constraints will be created by Alembic migrations

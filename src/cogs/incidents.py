@@ -1,9 +1,14 @@
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+
 import discord
 from discord.ext import commands, tasks
 import logging
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
+import json
 
 from src.utils.constants import (
     STATUS_EMOJIS,
@@ -54,7 +59,8 @@ class IncidentsCog(commands.Cog):
             if current_section:
                 formatted_text.append('\n'.join(current_section))
             
-            return '\n'.join(formatted_text)
+            result = '\n'.join(formatted_text)
+            return result[:4000] if len(result) > 4000 else result  # Discord embed limit
             
         except Exception as e:
             logger.error(f"Error cleaning HTML content: {e}")
@@ -69,11 +75,17 @@ class IncidentsCog(commands.Cog):
                    discord.Color.orange() if 'partial' in incident['title'].lower() else \
                    discord.Color.blue()
 
+            # Convert timestamp if it's a string
+            if isinstance(incident['timestamp'], str):
+                timestamp = datetime.fromisoformat(incident['timestamp'].replace('Z', '+00:00'))
+            else:
+                timestamp = incident['timestamp']
+
             embed = discord.Embed(
                 title=incident['title'],
                 description=self.clean_html_content(incident['description']),
                 color=color,
-                timestamp=incident['timestamp']
+                timestamp=timestamp
             )
 
             # Add status if available
@@ -105,7 +117,7 @@ class IncidentsCog(commands.Cog):
             # Check Redis cache first
             cached = await self.bot.redis.get('latest_incident')
             if cached:
-                return eval(cached)  # Convert string representation back to dict
+                return json.loads(cached)
 
             # Fetch from RSI API if no cache
             async with self.bot.session.get(RSI_API['FEED_URL']) as response:
@@ -125,7 +137,7 @@ class IncidentsCog(commands.Cog):
                     'title': latest.title.text if latest.title else 'Unknown Issue',
                     'description': latest.description.text if latest.description else '',
                     'link': latest.link.text if latest.link else None,
-                    'timestamp': datetime.now(),
+                    'timestamp': datetime.now().isoformat(),
                     'components': [
                         cat.text for cat in latest.find_all('category')
                         if cat.text not in STATUS_EMOJIS
@@ -140,7 +152,7 @@ class IncidentsCog(commands.Cog):
                 # Cache the incident
                 await self.bot.redis.set(
                     'latest_incident',
-                    str(incident),
+                    json.dumps(incident),
                     ex=CACHE_SETTINGS['STATUS_TTL']
                 )
 
@@ -171,10 +183,22 @@ class IncidentsCog(commands.Cog):
 
             # Create and send embed
             embed = self.create_incident_embed(incident)
-            await channel.send(embed=embed)
+            
+            # Add mentions based on severity
+            content = "@everyone" if "major" in incident['title'].lower() else None
+            
+            message = await channel.send(content=content, embed=embed)
+            
+            # Pin major incidents
+            if "major" in incident['title'].lower():
+                await message.pin()
             
             # Update last incident in Redis
-            await self.bot.redis.set('last_incident_id', self.last_incident_id)
+            await self.bot.redis.set(
+                'last_incident_id',
+                self.last_incident_id,
+                ex=CACHE_SETTINGS['STATUS_TTL']
+            )
             logger.info(f"Posted new incident: {incident['title']}")
 
         except Exception as e:
@@ -191,7 +215,11 @@ class IncidentsCog(commands.Cog):
     async def after_incidents_check(self):
         """Cleanup after incident check loop ends"""
         if self.last_incident_id:
-            await self.bot.redis.set('last_incident_id', self.last_incident_id)
+            await self.bot.redis.set(
+                'last_incident_id',
+                self.last_incident_id,
+                ex=CACHE_SETTINGS['STATUS_TTL']
+            )
 
 async def setup(bot):
     """Safe setup function for incidents cog"""

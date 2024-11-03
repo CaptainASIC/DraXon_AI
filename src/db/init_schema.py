@@ -1,8 +1,12 @@
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+
 import asyncio
 import logging
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.schema import CreateTable
-from .models import Base, RSIMember, RoleHistory, VerificationHistory
+from .models import Base, RSIMember, RoleHistory, VerificationHistory, IncidentHistory
 from src.config.settings import get_settings
 
 logger = logging.getLogger('DraXon_AI')
@@ -38,7 +42,7 @@ async def init_database():
     finally:
         await engine.dispose()
 
-def create_init_script():
+def create_init_script(engine):
     """Create SQL initialization script for manual execution"""
     tables = []
     for table in Base.metadata.sorted_tables:

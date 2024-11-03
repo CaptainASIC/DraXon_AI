@@ -1,10 +1,14 @@
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+
 import discord
 from discord import app_commands
 from discord.ext import commands
 import logging
 import asyncpg
 import redis.asyncio as redis
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple, List
 import ssl
 from datetime import datetime
 import aiohttp
@@ -207,7 +211,7 @@ class DraXonAIBot(commands.Bot):
         except Exception as e:
             logger.error(f"Error in on_ready: {e}")
 
-    async def verify_permissions(self, guild: discord.Guild) -> tuple[bool, list[str]]:
+    async def verify_permissions(self, guild: discord.Guild) -> Tuple[bool, List[str]]:
         """Verify bot has required permissions in guild"""
         missing_perms = []
         for perm in BOT_REQUIRED_PERMISSIONS:

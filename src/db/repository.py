@@ -4,7 +4,7 @@ import logging
 from sqlalchemy import select, delete, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
-from .models import RSIMember, RoleHistory, VerificationHistory
+from .models import RSIMember, RoleHistory, VerificationHistory, IncidentHistory
 
 logger = logging.getLogger('DraXon_AI')
 
@@ -188,4 +188,67 @@ class HistoryRepository:
         except SQLAlchemyError as e:
             await self.session.rollback()
             logger.error(f"Error cleaning up old records: {e}")
+            raise
+
+class IncidentRepository:
+    """Repository for incident-related database operations"""
+    
+    def __init__(self, session: AsyncSession):
+        self.session = session
+    
+    async def add_incident(self, incident_data: Dict[str, Any]) -> IncidentHistory:
+        """Add new incident to history"""
+        try:
+            incident = IncidentHistory(**incident_data)
+            self.session.add(incident)
+            await self.session.commit()
+            await self.session.refresh(incident)
+            return incident
+            
+        except SQLAlchemyError as e:
+            await self.session.rollback()
+            logger.error(f"Error adding incident: {e}")
+            raise
+    
+    async def get_incident(self, guid: str) -> Optional[IncidentHistory]:
+        """Get incident by GUID"""
+        try:
+            result = await self.session.execute(
+                select(IncidentHistory).where(IncidentHistory.guid == guid)
+            )
+            return result.scalar_one_or_none()
+            
+        except SQLAlchemyError as e:
+            logger.error(f"Error retrieving incident {guid}: {e}")
+            raise
+    
+    async def get_recent_incidents(self, limit: int = 10) -> List[IncidentHistory]:
+        """Get recent incidents"""
+        try:
+            result = await self.session.execute(
+                select(IncidentHistory)
+                .order_by(IncidentHistory.timestamp.desc())
+                .limit(limit)
+            )
+            return result.scalars().all()
+            
+        except SQLAlchemyError as e:
+            logger.error(f"Error retrieving recent incidents: {e}")
+            raise
+    
+    async def cleanup_old_incidents(self, days: int = 90) -> int:
+        """Clean up old incidents"""
+        try:
+            cutoff_date = datetime.utcnow() - timedelta(days=days)
+            
+            result = await self.session.execute(
+                delete(IncidentHistory).where(IncidentHistory.timestamp < cutoff_date)
+            )
+            
+            await self.session.commit()
+            return result.rowcount
+            
+        except SQLAlchemyError as e:
+            await self.session.rollback()
+            logger.error(f"Error cleaning up old incidents: {e}")
             raise
