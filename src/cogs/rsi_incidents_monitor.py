@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -26,6 +30,26 @@ class RSIIncidentMonitorCog(commands.Cog):
         self.last_incident_guid = None
         self.check_incidents_task.start()
         logger.info("RSI Incident Monitor initialized")
+        asyncio.create_task(self.setup_database())
+
+    async def setup_database(self):
+        """Setup required database tables"""
+        try:
+            async with self.bot.db.acquire() as conn:
+                await conn.execute('''
+                    CREATE TABLE IF NOT EXISTS incident_history (
+                        guid TEXT PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        description TEXT,
+                        status TEXT,
+                        components JSONB,
+                        link TEXT,
+                        timestamp TIMESTAMP WITH TIME ZONE NOT NULL
+                    )
+                ''')
+                logger.info("Incident history table created/verified")
+        except Exception as e:
+            logger.error(f"Error setting up database: {e}")
 
     def cog_unload(self):
         """Clean up when cog is unloaded"""
@@ -129,11 +153,17 @@ class RSIIncidentMonitorCog(commands.Cog):
                     discord.Color.orange() if 'partial' in incident['title'].lower() else
                     discord.Color.blue())
 
+            # Convert timestamp string to datetime if needed
+            if isinstance(incident['timestamp'], str):
+                timestamp = datetime.fromisoformat(incident['timestamp'].replace('Z', '+00:00'))
+            else:
+                timestamp = incident['timestamp']
+
             embed = discord.Embed(
                 title=incident['title'],
                 description=self.clean_html_content(incident['description']),
                 color=color,
-                timestamp=incident['timestamp']
+                timestamp=timestamp
             )
 
             # Add status if available
@@ -196,7 +226,7 @@ class RSIIncidentMonitorCog(commands.Cog):
                 'title': latest.title,
                 'description': latest.description,
                 'link': latest.link,
-                'timestamp': datetime.now().isoformat(),
+                'timestamp': datetime.utcnow().isoformat(),
                 'components': [
                     tag.term for tag in getattr(latest, 'tags', [])
                     if hasattr(tag, 'term') and tag.term not in STATUS_EMOJIS
@@ -227,6 +257,12 @@ class RSIIncidentMonitorCog(commands.Cog):
     async def store_incident_history(self, incident: Dict[str, Any]) -> None:
         """Store incident in database for history"""
         try:
+            # Convert timestamp string to datetime if needed
+            if isinstance(incident['timestamp'], str):
+                timestamp = datetime.fromisoformat(incident['timestamp'].replace('Z', '+00:00'))
+            else:
+                timestamp = incident['timestamp']
+
             async with self.bot.db.acquire() as conn:
                 await conn.execute('''
                     INSERT INTO incident_history (
@@ -241,7 +277,7 @@ class RSIIncidentMonitorCog(commands.Cog):
                     incident['status'],
                     json.dumps(incident['components']),
                     incident['link'],
-                    datetime.fromisoformat(incident['timestamp'])
+                    timestamp
                 )
         except Exception as e:
             logger.error(f"Error storing incident history: {e}")

@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -5,7 +9,7 @@ import logging
 import aiohttp
 import json
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 import asyncio
 
