@@ -35,6 +35,29 @@ class RSIIncidentMonitorCog(commands.Cog):
         except Exception as e:
             logger.error(f"Error unloading incident monitor: {e}")
 
+    async def check_maintenance_window(self) -> bool:
+        """Check if currently in maintenance window"""
+        try:
+            now = datetime.utcnow().time()
+            maintenance_start = datetime.strptime(
+                RSI_API['MAINTENANCE_START'], 
+                "%H:%M"
+            ).time()
+            
+            maintenance_end = (
+                datetime.combine(datetime.utcnow().date(), maintenance_start) +
+                timedelta(hours=RSI_API['MAINTENANCE_DURATION'])
+            ).time()
+            
+            if maintenance_end < maintenance_start:
+                return (now >= maintenance_start or now <= maintenance_end)
+            
+            return maintenance_start <= now <= maintenance_end
+
+        except Exception as e:
+            logger.error(f"Error checking maintenance window: {e}")
+            return False
+
     async def make_request(self) -> Optional[str]:
         """Make HTTP request with retries and error handling"""
         if not hasattr(self.bot, 'session') or not self.bot.session:
@@ -148,8 +171,7 @@ class RSIIncidentMonitorCog(commands.Cog):
         """Fetch and process the latest incident"""
         try:
             # Check maintenance window
-            status_cog = self.bot.get_cog('RSIStatusMonitorCog')
-            if status_cog and await status_cog.check_maintenance_window():
+            if await self.check_maintenance_window():
                 logger.info("Currently in maintenance window, skipping incident check")
                 return None
 
