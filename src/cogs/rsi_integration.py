@@ -294,6 +294,9 @@ class RSIIntegrationCog(commands.Cog):
                      if org.get('sid') == self.settings.rsi_organization_sid)
             )
 
+            # Convert timestamp to datetime
+            current_time = datetime.utcnow()
+
             # Prepare data for storage
             rsi_data = {
                 'discord_id': str(interaction.user.id),
@@ -307,7 +310,7 @@ class RSIIntegrationCog(commands.Cog):
                 'org_stars': draxon_org.get('stars', 0),
                 'org_status': 'Main' if is_main_org else 'Affiliate',
                 'verified': True,
-                'last_updated': datetime.utcnow().isoformat(),
+                'last_updated': current_time,
                 'raw_data': user_data
             }
 
@@ -378,7 +381,7 @@ class RSIIntegrationCog(commands.Cog):
             # Cache member data
             await self.bot.redis.set(
                 f'member:{interaction.user.id}',
-                json.dumps(rsi_data),
+                json.dumps({**rsi_data, 'last_updated': rsi_data['last_updated'].isoformat()}),
                 ex=CACHE_SETTINGS['MEMBER_DATA_TTL']
             )
 
@@ -463,90 +466,87 @@ class RSIIntegrationCog(commands.Cog):
             members.sort(key=lambda x: x.get('stars', 0), reverse=True)
 
             async with self.bot.db.acquire() as conn:
+                # Convert async generator to list
+                db_members = await conn.fetch('SELECT handle, discord_id, org_status FROM rsi_members')
+                db_members_dict = {
+                    m['handle'].lower(): {
+                        'discord_id': m['discord_id'],
+                        'org_status': m['org_status']
+                    } for m in db_members
+                }
+
                 for member in members:
-                    # Get Discord info from database
-                    discord_data = await conn.fetchrow('''
-                        SELECT discord_id, org_status
-                        FROM rsi_members 
-                        WHERE LOWER(handle) = LOWER($1)
-                    ''', member['handle'])
+                    handle = member['handle']
+                    db_data = db_members_dict.get(handle.lower(), {})
+                    discord_id = db_data.get('discord_id', 'N/A')
+                    org_status = db_data.get('org_status', 'Unknown')
 
                     discord_member = None
-                    if discord_data:
-                        discord_member = interaction.guild.get_member(
-                            int(discord_data['discord_id'])
-                        )
+                    if discord_id != 'N/A':
+                        discord_member = interaction.guild.get_member(int(discord_id))
 
-                    discord_id = discord_member.id if discord_member else "N/A"
                     discord_name = discord_member.name if discord_member else "N/A"
-                    org_status = discord_data['org_status'] if discord_data else 'Unknown'
-                    
                     roles_str = ", ".join(member.get('roles', []))
                     
                     lines.append(
                         f"{discord_id} | {discord_name} | {member['display']} | "
-                        f"{member['handle']} | {member.get('stars', 0)} | {org_status} | "
+                        f"{handle} | {member.get('stars', 0)} | {org_status} | "
                         f"{member.get('rank', 'Unknown')} | {roles_str}"
                     )
 
-            # Create and send file
-            file = discord.File(
-                io.StringIO('\n'.join(lines)),
-                filename=f'draxon_members_{timestamp}.txt'
-            )
-
-            # Create summary embed
-            embed = discord.Embed(
-                title=f"📊 {org_info['name']} Member Summary",
-                description=f"Organization SID: {org_info['sid']}\n"
-                           f"Total Members: {org_info['members']}\n"
-                           f"Primary Focus: {org_info['focus']['primary']['name']}\n"
-                           f"Secondary Focus: {org_info['focus']['secondary']['name']}",
-                color=discord.Color.blue(),
-                timestamp=datetime.utcnow()
-            )
-
-            if org_info.get('banner'):
-                embed.set_image(url=org_info['banner'])
-
-            # Add statistics
-            total_members = len(members)
-            linked_members = sum(1 for m in members if any(
-                m['handle'].lower() == member_data['handle'].lower()
-                for member_data in await conn.fetch(
-                    'SELECT handle FROM rsi_members'
+                # Create and send file
+                file = discord.File(
+                    io.StringIO('\n'.join(lines)),
+                    filename=f'draxon_members_{timestamp}.txt'
                 )
-            ))
 
-            embed.add_field(
-                name="Member Statistics",
-                value=f"👥 Total Members: {total_members}\n"
-                      f"🔗 Linked Members: {linked_members}\n"
-                      f"❌ Unlinked Members: {total_members - linked_members}",
-                inline=False
-            )
+                # Create summary embed
+                embed = discord.Embed(
+                    title=f"📊 {org_info['name']} Member Summary",
+                    description=f"Organization SID: {org_info['sid']}\n"
+                               f"Total Members: {org_info['members']}\n"
+                               f"Primary Focus: {org_info['focus']['primary']['name']}\n"
+                               f"Secondary Focus: {org_info['focus']['secondary']['name']}",
+                    color=discord.Color.blue(),
+                    timestamp=datetime.utcnow()
+                )
 
-            # Add rank distribution
-            rank_counts = {}
-            for member in members:
-                rank = member.get('rank', 'Unknown')
-                rank_counts[rank] = rank_counts.get(rank, 0) + 1
+                if org_info.get('banner'):
+                    embed.set_image(url=org_info['banner'])
 
-            rank_info = "\n".join(
-                f"• {rank}: {count}" 
-                for rank, count in sorted(rank_counts.items())
-            )
-            embed.add_field(
-                name="Rank Distribution",
-                value=rank_info,
-                inline=False
-            )
+                # Add statistics
+                total_members = len(members)
+                linked_members = len([m for m in members if m['handle'].lower() in db_members_dict])
 
-            await interaction.followup.send(
-                embed=embed,
-                file=file,
-                ephemeral=True
-            )
+                embed.add_field(
+                    name="Member Statistics",
+                    value=f"👥 Total Members: {total_members}\n"
+                          f"🔗 Linked Members: {linked_members}\n"
+                          f"❌ Unlinked Members: {total_members - linked_members}",
+                    inline=False
+                )
+
+                # Add rank distribution
+                rank_counts = {}
+                for member in members:
+                    rank = member.get('rank', 'Unknown')
+                    rank_counts[rank] = rank_counts.get(rank, 0) + 1
+
+                rank_info = "\n".join(
+                    f"• {rank}: {count}" 
+                    for rank, count in sorted(rank_counts.items())
+                )
+                embed.add_field(
+                    name="Rank Distribution",
+                    value=rank_info,
+                    inline=False
+                )
+
+                await interaction.followup.send(
+                    embed=embed,
+                    file=file,
+                    ephemeral=True
+                )
 
         except Exception as e:
             logger.error(f"Error in org_members command: {e}")
@@ -585,15 +585,19 @@ class RSIIntegrationCog(commands.Cog):
             org_by_handle = {m['handle'].lower(): m for m in org_members}
             
             async with self.bot.db.acquire() as conn:
+                # Get all member data at once
+                db_members = await conn.fetch('SELECT * FROM rsi_members')
+                db_members_by_id = {m['discord_id']: m for m in db_members}
+                
+                # Get total linked count
+                total_linked = len(db_members)
+                
+                # Process Discord members
                 for member in interaction.guild.members:
                     if member.bot:
                         continue
                         
-                    # Get member data from database
-                    member_data = await conn.fetchrow('''
-                        SELECT * FROM rsi_members 
-                        WHERE discord_id = $1
-                    ''', str(member.id))
+                    member_data = db_members_by_id.get(str(member.id))
                     
                     if member_data:
                         handle = member_data['handle']
@@ -626,64 +630,58 @@ class RSIIntegrationCog(commands.Cog):
                         f"{display} | {stars} | {org_status} | {last_updated}"
                     )
 
-            # Create comparison file
-            file = discord.File(
-                io.StringIO('\n'.join(lines)),
-                filename=f'draxon_comparison_{timestamp}.txt'
-            )
+                # Create comparison file
+                file = discord.File(
+                    io.StringIO('\n'.join(lines)),
+                    filename=f'draxon_comparison_{timestamp}.txt'
+                )
 
-            # Create summary embed
-            embed = discord.Embed(
-                title="🔍 Member Comparison Results",
-                color=discord.Color.blue(),
-                timestamp=datetime.utcnow()
-            )
+                # Create summary embed
+                embed = discord.Embed(
+                    title="🔍 Member Comparison Results",
+                    color=discord.Color.blue(),
+                    timestamp=datetime.utcnow()
+                )
 
-            # Calculate statistics
-            total_discord = len([m for m in interaction.guild.members if not m.bot])
-            total_linked = await conn.fetchval('SELECT COUNT(*) FROM rsi_members')
-            total_org = len(org_members)
-            
-            discord_handles = set()
-            org_handles = {m['handle'].lower() for m in org_members}
-            
-            member_data = await conn.fetch('SELECT handle FROM rsi_members')
-            for data in member_data:
-                if data['handle']:
-                    discord_handles.add(data['handle'].lower())
-            
-            missing_from_discord = len(org_handles - discord_handles)
-            missing_from_org = len(discord_handles - org_handles)
+                # Calculate statistics
+                total_discord = len([m for m in interaction.guild.members if not m.bot])
+                total_org = len(org_members)
+                
+                discord_handles = {m['handle'].lower() for m in db_members if m['handle']}
+                org_handles = {m['handle'].lower() for m in org_members}
+                
+                missing_from_discord = len(org_handles - discord_handles)
+                missing_from_org = len(discord_handles - org_handles)
 
-            # Add statistics to embed
-            embed.add_field(
-                name="Member Counts",
-                value=f"👥 Discord Members: {total_discord}\n"
-                      f"🔗 Linked Accounts: {total_linked}\n"
-                      f"🏢 Organization Members: {total_org}",
-                inline=False
-            )
+                # Add statistics to embed
+                embed.add_field(
+                    name="Member Counts",
+                    value=f"👥 Discord Members: {total_discord}\n"
+                          f"🔗 Linked Accounts: {total_linked}\n"
+                          f"🏢 Organization Members: {total_org}",
+                    inline=False
+                )
 
-            embed.add_field(
-                name="Discrepancies",
-                value=f"❌ Missing from Discord: {missing_from_discord}\n"
-                      f"❓ Missing from Organization: {missing_from_org}",
-                inline=False
-            )
+                embed.add_field(
+                    name="Discrepancies",
+                    value=f"❌ Missing from Discord: {missing_from_discord}\n"
+                          f"❓ Missing from Organization: {missing_from_org}",
+                    inline=False
+                )
 
-            embed.add_field(
-                name="Legend",
-                value=f"{COMPARE_STATUS['match']} Matched\n"
-                      f"{COMPARE_STATUS['missing']} Missing\n"
-                      f"{COMPARE_STATUS['mismatch']} Mismatched",
-                inline=False
-            )
+                embed.add_field(
+                    name="Legend",
+                    value=f"{COMPARE_STATUS['match']} Matched\n"
+                          f"{COMPARE_STATUS['missing']} Missing\n"
+                          f"{COMPARE_STATUS['mismatch']} Mismatched",
+                    inline=False
+                )
 
-            await interaction.followup.send(
-                embed=embed,
-                file=file,
-                ephemeral=True
-            )
+                await interaction.followup.send(
+                    embed=embed,
+                    file=file,
+                    ephemeral=True
+                )
 
         except Exception as e:
             logger.error(f"Error in compare_members command: {e}")
