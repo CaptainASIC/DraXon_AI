@@ -326,11 +326,11 @@ class CommandsCog(commands.Cog):
             await interaction.response.defer(ephemeral=True)
             
             # Perform checks
-            await status_monitor.check_status()
+            current_status = await status_monitor.check_status()
             incident = await incident_monitor.get_latest_incident(force=True)
             
             # Create status embed
-            status_embed = await status_monitor.format_status_embed()
+            status_embed = status_monitor.format_status_embed()  # Removed await
             
             # Create incident embed if there is one
             embeds = [status_embed]
