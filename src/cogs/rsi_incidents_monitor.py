@@ -415,49 +415,6 @@ class RSIIncidentMonitorCog(commands.Cog):
                 ephemeral=True
             )
 
-    @app_commands.command(
-        name="force-check",
-        description="Force check for new RSI incidents"
-    )
-    @app_commands.checks.has_role("Chairman")  # Only allow Chairman role to force check
-    async def force_check(self, interaction: discord.Interaction):
-        """Force check for new incidents"""
-        await interaction.response.defer(ephemeral=True)
-        
-        try:
-            if await self.check_maintenance_window():
-                await interaction.followup.send(
-                    "⚠️ RSI systems are currently in maintenance window.\n"
-                    f"Maintenance period: {RSI_API['MAINTENANCE_START']} UTC "
-                    f"for {RSI_API['MAINTENANCE_DURATION']} hours.",
-                    ephemeral=True
-                )
-                return
-
-            # Force check by bypassing cache
-            incident = await self.get_latest_incident(force=True)
-            
-            if not incident:
-                await interaction.followup.send(
-                    "Unable to fetch incident data. Please try again later.",
-                    ephemeral=True
-                )
-                return
-            
-            embed = self.create_incident_embed(incident)
-            await interaction.followup.send(
-                content="Latest incident (force checked):",
-                embed=embed,
-                ephemeral=True
-            )
-            
-        except Exception as e:
-            logger.error(f"Error in force check command: {e}")
-            await interaction.followup.send(
-                "An error occurred while force checking incidents.",
-                ephemeral=True
-            )
-
 async def setup(bot):
     """Safe setup function for RSI incidents monitor cog"""
     try:
