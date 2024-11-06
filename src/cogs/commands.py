@@ -256,18 +256,18 @@ class CommandsCog(commands.Cog):
         """Manually trigger channel refresh"""
         try:
             members_cog = self.bot.get_cog('MembersCog')
-            status_cog = self.bot.get_cog('StatusCog')
+            status_cog = self.bot.get_cog('RSIStatusMonitorCog')
             
             if not members_cog or not status_cog:
                 await interaction.response.send_message(
-                    "❌ Required cogs not found.",
+                    "❌ Required cogs not found. Make sure MembersCog and RSIStatusMonitorCog are loaded.",
                     ephemeral=True
                 )
                 return
 
             # Update channels
             await members_cog.update_member_counts()
-            await status_cog.update_server_status()
+            await status_cog.check_status()  # This will trigger channel updates
             
             await interaction.response.send_message(
                 "✅ Channels refreshed successfully!", 
@@ -327,10 +327,20 @@ class CommandsCog(commands.Cog):
             
             # Perform checks
             await status_monitor.check_status()
-            await incident_monitor.check_incidents()
+            incident = await incident_monitor.get_latest_incident(force=True)
+            
+            # Create status embed
+            status_embed = await status_monitor.format_status_embed()
+            
+            # Create incident embed if there is one
+            embeds = [status_embed]
+            if incident:
+                incident_embed = incident_monitor.create_incident_embed(incident)
+                embeds.append(incident_embed)
             
             await interaction.followup.send(
-                "✅ Manual check completed successfully!",
+                content="✅ Manual check completed successfully!",
+                embeds=embeds,
                 ephemeral=True
             )
             

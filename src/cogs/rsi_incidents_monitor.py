@@ -197,7 +197,7 @@ class RSIIncidentMonitorCog(commands.Cog):
             logger.error(f"Error creating incident embed: {e}")
             raise
 
-    async def get_latest_incident(self) -> Optional[Dict[str, Any]]:
+    async def get_latest_incident(self, force: bool = False) -> Optional[Dict[str, Any]]:
         """Fetch and process the latest incident"""
         try:
             # Check maintenance window
@@ -205,10 +205,11 @@ class RSIIncidentMonitorCog(commands.Cog):
                 logger.info("Currently in maintenance window, skipping incident check")
                 return None
 
-            # Check Redis cache first
-            cached = await self.bot.redis.get('latest_incident')
-            if cached:
-                return json.loads(cached)
+            # Check Redis cache first (unless force check)
+            if not force:
+                cached = await self.bot.redis.get('latest_incident')
+                if cached:
+                    return json.loads(cached)
 
             # Fetch from feed
             content = await self.make_request()
@@ -238,7 +239,7 @@ class RSIIncidentMonitorCog(commands.Cog):
                 )
             }
 
-            # Cache the incident
+            # Cache the incident (even on force check)
             await self.bot.redis.set(
                 'latest_incident',
                 json.dumps(incident),
@@ -411,6 +412,49 @@ class RSIIncidentMonitorCog(commands.Cog):
             logger.error(f"Error in view_incidents command: {e}")
             await interaction.followup.send(
                 "An error occurred while retrieving incidents.",
+                ephemeral=True
+            )
+
+    @app_commands.command(
+        name="force-check",
+        description="Force check for new RSI incidents"
+    )
+    @app_commands.checks.has_role("Chairman")  # Only allow Chairman role to force check
+    async def force_check(self, interaction: discord.Interaction):
+        """Force check for new incidents"""
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            if await self.check_maintenance_window():
+                await interaction.followup.send(
+                    "⚠️ RSI systems are currently in maintenance window.\n"
+                    f"Maintenance period: {RSI_API['MAINTENANCE_START']} UTC "
+                    f"for {RSI_API['MAINTENANCE_DURATION']} hours.",
+                    ephemeral=True
+                )
+                return
+
+            # Force check by bypassing cache
+            incident = await self.get_latest_incident(force=True)
+            
+            if not incident:
+                await interaction.followup.send(
+                    "Unable to fetch incident data. Please try again later.",
+                    ephemeral=True
+                )
+                return
+            
+            embed = self.create_incident_embed(incident)
+            await interaction.followup.send(
+                content="Latest incident (force checked):",
+                embed=embed,
+                ephemeral=True
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in force check command: {e}")
+            await interaction.followup.send(
+                "An error occurred while force checking incidents.",
                 ephemeral=True
             )
 

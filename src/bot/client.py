@@ -88,7 +88,6 @@ class DraXonAIBot(commands.Bot):
             cogs = [
                 # Core functionality
                 'src.cogs.channels',      # Channel management
-                'src.cogs.status',        # Status display
                 'src.cogs.members',       # Member management
                 'src.cogs.promotion',     # Role management
                 'src.cogs.commands',      # Command handling

@@ -16,7 +16,8 @@ import aiohttp
 from src.utils.constants import (
     RSI_API,
     STATUS_EMOJIS,
-    CACHE_SETTINGS
+    CACHE_SETTINGS,
+    CHANNELS_CONFIG
 )
 
 logger = logging.getLogger('DraXon_AI')
@@ -208,30 +209,47 @@ class RSIStatusMonitorCog(commands.Cog):
         try:
             channels_cog = self.bot.get_cog('ChannelsCog')
             if not channels_cog:
+                logger.error("ChannelsCog not found")
                 return
 
             category = await channels_cog.get_category(guild)
             if not category:
+                logger.error("Category not found")
                 return
 
+            # Get status channel configs
+            status_channels = [
+                config for config in CHANNELS_CONFIG 
+                if config["count_type"] == "status"
+            ]
+
             for channel in category.voice_channels:
-                if channel.name.lower().endswith('status'):
-                    status_type = next(
-                        (s for s in self.system_statuses.keys() 
-                         if s in channel.name.lower()),
-                        None
-                    )
-                    if status_type:
-                        status = self.system_statuses[status_type]
-                        emoji = STATUS_EMOJIS.get(status, STATUS_EMOJIS['unknown'])
-                        new_name = f"{emoji} {channel.name.split()[0]}"
-                        
-                        if channel.name != new_name:
-                            try:
-                                await channel.edit(name=new_name)
-                                logger.info(f"Updated status channel: {new_name}")
-                            except Exception as e:
-                                logger.error(f"Error updating channel {channel.name}: {e}")
+                # Find matching config for this channel
+                config = next(
+                    (c for c in status_channels 
+                     if c["name"].lower() in channel.name.lower()),
+                    None
+                )
+                
+                if not config:
+                    continue
+
+                # Extract system name from config
+                system = config["name"].replace("-status", "")
+                
+                if system in self.system_statuses:
+                    status = self.system_statuses[system]
+                    emoji = STATUS_EMOJIS.get(status, STATUS_EMOJIS['unknown'])
+                    
+                    # Use the display format from config
+                    new_name = config["display"].format(emoji=emoji)
+                    
+                    if channel.name != new_name:
+                        try:
+                            await channel.edit(name=new_name)
+                            logger.info(f"Updated status channel: {new_name}")
+                        except Exception as e:
+                            logger.error(f"Error updating channel {channel.name}: {e}")
 
         except Exception as e:
             logger.error(f"Error updating status channels: {e}")
