@@ -45,7 +45,9 @@ class BackupCog(commands.Cog):
         """Backup pinned messages from a channel"""
         pins = []
         try:
-            async for message in channel.pins():
+            # Get all pins first, then iterate over them
+            pinned_messages = await channel.pins()
+            for message in pinned_messages:
                 pins.append({
                     'content': message.content,
                     'author': str(message.author),
