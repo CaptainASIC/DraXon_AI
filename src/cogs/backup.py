@@ -126,14 +126,34 @@ class BackupCog(commands.Cog):
                     logger.error(f"Error backing up channel {channel.name}: {e}")
 
             # Back up bot settings from Redis
-            async with self.bot.redis.pipeline() as pipe:
-                pipe.hgetall('channel_ids')
-                pipe.hgetall('bot_settings')
-                channel_ids, bot_settings = await pipe.execute()
-                
+            try:
+                async with self.bot.redis.pipeline() as pipe:
+                    pipe.hgetall('channel_ids')
+                    pipe.hgetall('bot_settings')
+                    channel_ids, bot_settings = await pipe.execute()
+                    
+                    # Handle both bytes and string types for Redis values
+                    channel_ids_dict = {}
+                    for k, v in channel_ids.items():
+                        key = k.decode() if isinstance(k, bytes) else k
+                        value = int(v.decode() if isinstance(v, bytes) else v)
+                        channel_ids_dict[key] = value
+
+                    settings_dict = {}
+                    for k, v in bot_settings.items():
+                        key = k.decode() if isinstance(k, bytes) else k
+                        value = v.decode() if isinstance(v, bytes) else v
+                        settings_dict[key] = value
+                    
+                    backup_data['bot_settings'] = {
+                        'channel_ids': channel_ids_dict,
+                        'settings': settings_dict
+                    }
+            except Exception as e:
+                logger.error(f"Error backing up Redis settings: {e}")
                 backup_data['bot_settings'] = {
-                    'channel_ids': {k.decode(): int(v) for k, v in channel_ids.items()},
-                    'settings': {k.decode(): v.decode() for k, v in bot_settings.items()}
+                    'channel_ids': {},
+                    'settings': {}
                 }
 
             return backup_data
