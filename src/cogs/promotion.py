@@ -260,7 +260,7 @@ class PromotionCog(commands.Cog):
             current_index
         ]
 
-    def format_promotion_announcement(self, member: discord.Member, new_rank: str, reason: str) -> str:
+    def format_promotion_announcement(self, member: discord.Member, new_rank: str, previous_rank: str, reason: str) -> str:
         """Format a professional promotion announcement"""
         announcements = [
             f"🎉 **DraXon Promotion Announcement** 🎉\n\n"
@@ -268,7 +268,7 @@ class PromotionCog(commands.Cog):
             f"It is with great pleasure that we announce the promotion of {member.mention} "
             f"to the position of **{new_rank}**!\n\n"
             f"📋 **Promotion Details**\n"
-            f"• Previous Role: {next((r.name for r in member.roles if r.name in ROLE_HIERARCHY), 'None')}\n"
+            f"• Previous Role: {previous_rank or 'None'}\n"
             f"• New Role: {new_rank}\n"
             f"• Reason: {reason}\n\n"
             f"Please join us in congratulating {member.mention} on this well-deserved promotion! 🚀",
@@ -278,7 +278,7 @@ class PromotionCog(commands.Cog):
             f"We are delighted to announce that {member.mention} has been promoted to "
             f"the role of **{new_rank}**!\n\n"
             f"🎯 **Achievement Details**\n"
-            f"• Advanced from: {next((r.name for r in member.roles if r.name in ROLE_HIERARCHY), 'None')}\n"
+            f"• Advanced from: {previous_rank or 'None'}\n"
             f"• New Position: {new_rank}\n"
             f"• Reason: {reason}\n\n"
             f"Congratulations on this outstanding achievement! 🏆"
@@ -286,14 +286,14 @@ class PromotionCog(commands.Cog):
         
         return random.choice(announcements)
 
-    def format_demotion_announcement(self, member: discord.Member, new_rank: str, reason: str) -> str:
+    def format_demotion_announcement(self, member: discord.Member, new_rank: str, previous_rank: str, reason: str) -> str:
         """Format a professional demotion announcement"""
         announcements = [
             f"📢 **DraXon Personnel Notice** 📢\n\n"
             f"@everyone\n\n"
             f"This notice serves to inform all members that {member.mention} has been reassigned to the position of **{new_rank}**.\n\n"
             f"📋 **Position Update**\n"
-            f"• Previous Role: {next((r.name for r in member.roles if r.name in ROLE_HIERARCHY), 'None')}\n"
+            f"• Previous Role: {previous_rank or 'None'}\n"
             f"• New Role: {new_rank}\n"
             f"• Reason: {reason}\n\n"
             f"This change is effective immediately. 📝",
@@ -302,7 +302,7 @@ class PromotionCog(commands.Cog):
             f"@everyone\n\n"
             f"Please be advised that {member.mention}'s position has been adjusted to **{new_rank}**.\n\n"
             f"📊 **Status Update**\n"
-            f"• Previous Position: {next((r.name for r in member.roles if r.name in ROLE_HIERARCHY), 'None')}\n"
+            f"• Previous Position: {previous_rank or 'None'}\n"
             f"• Updated Position: {new_rank}\n"
             f"• Reason: {reason}\n\n"
             f"This change takes effect immediately. 📌"
@@ -326,7 +326,7 @@ class PromotionCog(commands.Cog):
             timestamp=datetime.utcnow()
         )
         
-        embed.add_field(name="Previous Rank", value=old_rank, inline=True)
+        embed.add_field(name="Previous Rank", value=old_rank or "None", inline=True)
         embed.add_field(name="New Rank", value=new_rank, inline=True)
         embed.add_field(name="Reason", value=reason, inline=False)
         
@@ -341,6 +341,7 @@ class PromotionCog(commands.Cog):
         """Process rank change in database and Discord"""
         try:
             guild = member.guild
+            # Store current rank before making any changes
             current_rank = next(
                 (role.name for role in member.roles if role.name in ROLE_HIERARCHY),
                 None
@@ -388,11 +389,11 @@ class PromotionCog(commands.Cog):
                 if channel_id:
                     channel = self.bot.get_channel(channel_id)
                     if channel:
-                        # Send announcement
+                        # Send announcement using stored current_rank
                         announcement = (
-                            self.format_promotion_announcement(member, new_rank, reason)
+                            self.format_promotion_announcement(member, new_rank, current_rank, reason)
                             if is_promotion else
-                            self.format_demotion_announcement(member, new_rank, reason)
+                            self.format_demotion_announcement(member, new_rank, current_rank, reason)
                         )
                         await channel.send(announcement)
 
