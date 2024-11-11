@@ -1,6 +1,6 @@
-# DraXon AI - Discord Management System v2.0.0
+# DraXon OCULUS - Discord Management System v2.0.5
 
-A comprehensive Discord bot designed for DraXon (DraXon Industries) that handles server management, RSI integration, and automated organizational tasks.
+A comprehensive Discord bot designed for DraXon (DraXon Industries) that handles server management, RSI integration, and automated organizational tasks. OCULUS (Organizational Command & Unified Leadership Implementation System) provides advanced management and monitoring capabilities.
 
 ## Features
 
@@ -27,7 +27,14 @@ A comprehensive Discord bot designed for DraXon (DraXon Industries) that handles
 - Dedicated status channels
 
 ### Role Management
-- Promotion/demotion system
+- Promotion/demotion system with updated hierarchy
+  - Magnate (Highest)
+  - Chairman
+  - Executive
+  - Team Leader
+  - Employee
+  - Applicant
+  - Screening
 - Automated role assignments
 - Role verification based on org status
 - Multi-channel notification system
@@ -46,7 +53,7 @@ A comprehensive Discord bot designed for DraXon (DraXon Industries) that handles
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/CaptainASIC/DraXon_AI
+git clone https://github.com/CaptainASIC/DraXon_OCULUS
 cd DraXon
 ```
 
@@ -65,7 +72,7 @@ docker-compose up -d
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/CaptainASIC/DraXon_AI
+git clone https://github.com/CaptainASIC/DraXon_OCULUS
 cd DraXon
 ```
 
@@ -114,8 +121,8 @@ python bot.py
 - `/refresh-channels` - Refresh channel information
 - `/setup` - Configure bot channels and notifications
 - `/force-check` - Check incidents and status
-- `/DraXon-backup` - Create server backup
-- `/DraXon-restore` - Restore from backup
+- `/draxon-backup` - Create server backup
+- `/draxon-restore` - Restore from backup
 
 ## Database Structure
 
@@ -126,15 +133,14 @@ The system uses PostgreSQL for storing RSI member data and Redis for caching. Th
 - Linking history
 - Role change history
 
-## New in v2.0.0
+## New in v2.0.5
 
-- Migrated to PostgreSQL for improved scalability
-- Added Redis caching for better performance
-- Restructured project for maintainability
-- Enhanced Docker support
-- Improved error handling and logging
-- Updated command system with better feedback
-- Enhanced security features
+- Rebranded to DraXon OCULUS (Organizational Command & Unified Leadership Implementation System)
+- Updated role hierarchy system
+- Enhanced command feedback and error handling
+- Improved performance and reliability
+- Updated documentation and help system
+- Bug fixes and stability improvements
 
 ## Contributing
 
@@ -146,14 +152,14 @@ The system uses PostgreSQL for storing RSI member data and Redis for caching. Th
 
 ## License 
 
-This project is licensed under the GNU General Public License v3.0 (GPL-3.0). See the [LICENSE](LICENSE) file for details.\
+This project is licensed under the GNU General Public License v3.0 (GPL-3.0). See the [LICENSE](LICENSE) file for details.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 ## Contact
 
 For questions or issues:
-- GitHub Issues: [Create an issue](https://github.com/CaptainASIC/DraXon_AI/issues)
+- GitHub Issues: [Create an issue](https://github.com/CaptainASIC/DraXon_OCULUS/issues)
 - DraXon Discord: [Join our server](https://discord.gg/bjFZBRhw8Q)
 
 Created by DraXon (DraXon Industries)

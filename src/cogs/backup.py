@@ -10,7 +10,7 @@ import asyncio
 
 from src.utils.constants import CHANNEL_PERMISSIONS
 
-logger = logging.getLogger('DraXon_AI')
+logger = logging.getLogger('DraXon_OCULUS')
 
 class BackupCog(commands.Cog):
     """Cog for handling server backup and restore operations"""
@@ -380,7 +380,7 @@ class BackupCog(commands.Cog):
             timestamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
             file = discord.File(
                 io.StringIO(backup_json),
-                filename=f'draxon_backup_{timestamp}.json'
+                filename=f'draxon_oculus_backup_{timestamp}.json'
             )
             
             # Store backup in Redis with timestamp as key

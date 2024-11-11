@@ -8,14 +8,14 @@ import redis.asyncio as redis
 from pathlib import Path
 
 from src.utils.logger import setup_logging
-from src.bot.client import DraXonAIBot
+from src.bot.client import DraXonOCULUSBot
 from src.config.settings import Settings
 from src.db.database import init_db, init_redis
 from src.utils.constants import LOG_DIR, APP_VERSION
 
 # Initialize logging first
 setup_logging()
-logger = logging.getLogger('DraXon_AI')
+logger = logging.getLogger('DraXon_OCULUS')
 
 async def initialize_services(settings: Settings) -> Tuple[asyncpg.Pool, redis.Redis]:
     """Initialize database and Redis connections"""
@@ -35,7 +35,7 @@ async def initialize_services(settings: Settings) -> Tuple[asyncpg.Pool, redis.R
         logger.error(f"Failed to initialize services: {e}")
         raise
 
-async def cleanup_services(bot: Optional[DraXonAIBot] = None, 
+async def cleanup_services(bot: Optional[DraXonOCULUSBot] = None, 
                          db_pool: Optional[asyncpg.Pool] = None, 
                          redis_pool: Optional[redis.Redis] = None) -> None:
     """Cleanup function to properly close connections"""
@@ -90,15 +90,15 @@ async def verify_env(settings: Settings) -> None:
         raise
 
 async def main() -> None:
-    """Main entry point for the DraXon AI bot"""
+    """Main entry point for the DraXon OCULUS bot"""
     # Initialize variables
     settings: Optional[Settings] = None
     db_pool: Optional[asyncpg.Pool] = None
     redis_pool: Optional[redis.Redis] = None
-    bot: Optional[DraXonAIBot] = None
+    bot: Optional[DraXonOCULUSBot] = None
     
     try:
-        logger.info(f"Starting DraXon AI Bot v{APP_VERSION}")
+        logger.info(f"Starting DraXon OCULUS Bot v{APP_VERSION}")
         
         # Verify directories and environment
         await verify_directories()
@@ -124,7 +124,7 @@ async def main() -> None:
         logger.info("SSL context created")
         
         # Initialize bot
-        bot = DraXonAIBot(
+        bot = DraXonOCULUSBot(
             db_pool=db_pool,
             redis_pool=redis_pool,
             ssl_context=ssl_context,

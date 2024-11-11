@@ -7,7 +7,7 @@ from typing import Dict, Optional
 
 from src.utils.constants import CHANNELS_CONFIG
 
-logger = logging.getLogger('DraXon_AI')
+logger = logging.getLogger('DraXon_OCULUS')
 
 class MembersCog(commands.Cog):
     """Cog for handling member count tracking and statistics"""
@@ -86,7 +86,7 @@ class MembersCog(commands.Cog):
             try:
                 category = await channels_cog.get_category(guild)
                 if not category:
-                    logger.warning(f"No DraXon AI category found in {guild.name}")
+                    logger.warning(f"No DraXon OCULUS category found in {guild.name}")
                     continue
 
                 logger.info(f"Updating counts for guild: {guild.name}")

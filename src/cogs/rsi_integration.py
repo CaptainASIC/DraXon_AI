@@ -20,7 +20,7 @@ from src.utils.constants import (
 )
 from src.config.settings import get_settings
 
-logger = logging.getLogger('DraXon_AI')
+logger = logging.getLogger('DraXon_OCULUS')
 
 class LinkAccountModal(discord.ui.Modal, title='Link RSI Account'):
     def __init__(self):
@@ -497,7 +497,7 @@ class RSIIntegrationCog(commands.Cog):
                 # Create and send file
                 file = discord.File(
                     io.StringIO('\n'.join(lines)),
-                    filename=f'draxon_members_{timestamp}.txt'
+                    filename=f'draxon_oculus_members_{timestamp}.txt'
                 )
 
                 # Create summary embed
@@ -633,7 +633,7 @@ class RSIIntegrationCog(commands.Cog):
                 # Create comparison file
                 file = discord.File(
                     io.StringIO('\n'.join(lines)),
-                    filename=f'draxon_comparison_{timestamp}.txt'
+                    filename=f'draxon_oculus_comparison_{timestamp}.txt'
                 )
 
                 # Create summary embed

@@ -20,10 +20,10 @@ from src.utils.constants import (
     CACHE_SETTINGS
 )
 
-logger = logging.getLogger('DraXon_AI')
+logger = logging.getLogger('DraXon_OCULUS')
 
-class DraXonAIBot(commands.Bot):
-    """Main bot class for DraXon AI"""
+class DraXonOCULUSBot(commands.Bot):
+    """Main bot class for DraXon OCULUS (Organizational Command & Unified Leadership Implementation System)"""
     
     def __init__(self, 
                  db_pool: asyncpg.Pool,
@@ -186,7 +186,7 @@ class DraXonAIBot(commands.Bot):
         if self._ready:
             return
             
-        logger.info(f'DraXon AI Bot v{APP_VERSION} has connected to Discord!')
+        logger.info(f'DraXon OCULUS Bot v{APP_VERSION} has connected to Discord!')
         try:
             # Set custom activity
             activity = discord.CustomActivity(name=f"Ver. {APP_VERSION} Processing...")
@@ -250,7 +250,7 @@ class DraXonAIBot(commands.Bot):
                 # Try to notify guild owner
                 try:
                     await guild.owner.send(
-                        f"⚠️ DraXon AI is missing required permissions in {guild.name}:\n"
+                        f"⚠️ DraXon OCULUS is missing required permissions in {guild.name}:\n"
                         + "\n".join(f"• {perm}" for perm in missing)
                     )
                 except Exception as e:

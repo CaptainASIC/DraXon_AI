@@ -16,7 +16,7 @@ from src.utils.constants import (
     ROLE_HIERARCHY
 )
 
-logger = logging.getLogger('DraXon_AI')
+logger = logging.getLogger('DraXon_OCULUS')
 
 class ChannelSelectView(discord.ui.View):
     """View for channel selection during setup"""
@@ -238,7 +238,7 @@ class CommandsCog(commands.Cog):
                 inline=False
             )
 
-            embed.set_footer(text=f"DraXon AI v{APP_VERSION}")
+            embed.set_footer(text=f"DraXon OCULUS v{APP_VERSION}")
 
             await interaction.response.send_message(embed=embed, ephemeral=True)
             
@@ -250,7 +250,7 @@ class CommandsCog(commands.Cog):
             )
 
     @app_commands.command(name="refresh-channels", 
-                         description="Manually refresh DraXon AI channels")
+                         description="Manually refresh DraXon OCULUS channels")
     @app_commands.checks.has_role("Magnate")
     async def refresh_channels(self, interaction: discord.Interaction):
         """Manually trigger channel refresh"""
@@ -287,7 +287,7 @@ class CommandsCog(commands.Cog):
         """Setup command using channel selection view"""
         try:
             embed = discord.Embed(
-                title="DraXon AI Channel Setup",
+                title="DraXon OCULUS Channel Setup",
                 description="Please select the channels for each notification type below.\n"
                            "All channels must be selected before confirming the setup.",
                 color=discord.Color.blue()
@@ -351,7 +351,7 @@ class CommandsCog(commands.Cog):
                 ephemeral=True
             )
 
-    @app_commands.command(name="help", description="Display available DraXon AI commands")
+    @app_commands.command(name="help", description="Display available DraXon OCULUS commands")
     async def help_command(self, interaction: discord.Interaction):
         """Display help information for all commands"""
         try:
@@ -359,8 +359,8 @@ class CommandsCog(commands.Cog):
             is_leadership = any(role in DraXon_ROLES['leadership'] for role in user_roles)
 
             embed = discord.Embed(
-                title=f"DraXon AI Commands v{APP_VERSION}",
-                description="Available commands and their descriptions:",
+                title=f"DraXon OCULUS Commands v{APP_VERSION}",
+                description="Organizational Command & Unified Leadership Implementation System",
                 color=discord.Color.blue(),
                 timestamp=datetime.utcnow()
             )
@@ -412,7 +412,7 @@ class CommandsCog(commands.Cog):
 
             # Features section
             embed.add_field(
-                name="🆕 New Features v2.0.0",
+                name="🆕 New Features v2.0.5",
                 value="• Enhanced promotion and demotion system\n"
                       "• Improved channel configuration interface\n"
                       "• Advanced role management\n"
@@ -441,7 +441,7 @@ class CommandsCog(commands.Cog):
                 inline=False
             )
 
-            embed.set_footer(text=f"DraXon AI v{APP_VERSION} • Commands available based on your roles")
+            embed.set_footer(text=f"DraXon OCULUS v{APP_VERSION} • Commands available based on your roles")
             
             # Add timestamp to know when help was last viewed
             await self.bot.redis.hset(

@@ -94,7 +94,7 @@ CHANNELS_CONFIG = [
 
 # Channel Settings
 CHANNEL_SETTINGS = {
-    'CATEGORY_NAME': 'DraXon AI',  # Name of the category for bot channels
+    'CATEGORY_NAME': 'DraXon OCULUS',  # Name of the category for bot channels
     'REFRESH_INTERVAL': 300,       # Channel refresh interval in seconds (5 minutes)
     'MAX_RETRIES': 3,             # Maximum retries for channel operations
     'RETRY_DELAY': 5,             # Delay between retries in seconds

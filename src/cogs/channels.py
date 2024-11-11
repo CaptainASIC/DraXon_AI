@@ -11,7 +11,7 @@ from src.utils.constants import (
     CHANNEL_PERMISSIONS
 )
 
-logger = logging.getLogger('DraXon_AI')
+logger = logging.getLogger('DraXon_OCULUS')
 
 class ChannelsCog(commands.Cog):
     """Manages dynamic channels and category setup"""
@@ -138,7 +138,7 @@ class ChannelsCog(commands.Cog):
             category = await guild.create_category(
                 name=CHANNEL_SETTINGS['CATEGORY_NAME'],
                 overwrites=overwrites,
-                reason="DraXon AI Bot Category Creation"
+                reason="DraXon OCULUS Bot Category Creation"
             )
             
             self.category = category
@@ -201,7 +201,7 @@ class ChannelsCog(commands.Cog):
                         await category.create_voice_channel(
                             name=initial_name,
                             overwrites=overwrites,
-                            reason="DraXon AI Bot Channel Creation"
+                            reason="DraXon OCULUS Bot Channel Creation"
                         )
                         logger.info(f"Created channel {initial_name}")
                         
@@ -230,7 +230,7 @@ class ChannelsCog(commands.Cog):
     @commands.command(name="fix-permissions")
     @commands.has_role("Magnate")
     async def fix_permissions(self, ctx: commands.Context):
-        """Fix permissions for all DraXon AI channels"""
+        """Fix permissions for all DraXon OCULUS channels"""
         try:
             guild = ctx.guild
             has_perms, missing_perms = await self.check_bot_permissions(guild)
@@ -240,7 +240,7 @@ class ChannelsCog(commands.Cog):
 
             category = await self.get_category(guild)
             if not category:
-                await ctx.send("❌ Could not find DraXon AI category.")
+                await ctx.send("❌ Could not find DraXon OCULUS category.")
                 return
 
             await ctx.send("🔄 Fixing channel permissions...")
