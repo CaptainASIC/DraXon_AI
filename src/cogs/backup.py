@@ -366,7 +366,7 @@ class BackupCog(commands.Cog):
         name="draxon-backup",
         description="Create a backup of the server configuration"
     )
-    @app_commands.checks.has_role("Chairman")
+    @app_commands.checks.has_role("Magnate")
     async def backup(self, interaction: discord.Interaction):
         """Create a backup of the server"""
         await interaction.response.defer(ephemeral=True)
@@ -407,7 +407,7 @@ class BackupCog(commands.Cog):
         name="draxon-restore",
         description="Restore server configuration from a backup file"
     )
-    @app_commands.checks.has_role("Chairman")
+    @app_commands.checks.has_role("Magnate")
     async def restore(self, interaction: discord.Interaction, backup_file: discord.Attachment):
         """Restore from a backup file"""
         await interaction.response.defer(ephemeral=True)
@@ -494,7 +494,7 @@ class BackupCog(commands.Cog):
         name="list-backups",
         description="List available backups"
     )
-    @app_commands.checks.has_role("Chairman")
+    @app_commands.checks.has_role("Magnate")
     async def list_backups(self, interaction: discord.Interaction):
         """List available backups in Redis"""
         await interaction.response.defer(ephemeral=True)

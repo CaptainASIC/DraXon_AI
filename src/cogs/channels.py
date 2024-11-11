@@ -228,7 +228,7 @@ class ChannelsCog(commands.Cog):
             logger.error(f"Error setting up guild: {e}")
 
     @commands.command(name="fix-permissions")
-    @commands.has_role("Chairman")
+    @commands.has_role("Magnate")
     async def fix_permissions(self, ctx: commands.Context):
         """Fix permissions for all DraXon AI channels"""
         try:

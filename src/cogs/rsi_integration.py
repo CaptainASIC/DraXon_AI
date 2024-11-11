@@ -430,7 +430,7 @@ class RSIIntegrationCog(commands.Cog):
         name="draxon-org",
         description="Display organization member list"
     )
-    @app_commands.checks.has_role("Chairman")
+    @app_commands.checks.has_role("Magnate")
     async def org_members(self, interaction: discord.Interaction):
         """Command to display organization members"""
         await interaction.response.defer(ephemeral=True)
@@ -559,7 +559,7 @@ class RSIIntegrationCog(commands.Cog):
         name="draxon-compare",
         description="Compare Discord members with RSI org members"
     )
-    @app_commands.checks.has_role("Chairman")
+    @app_commands.checks.has_role("Magnate")
     async def compare_members(self, interaction: discord.Interaction):
         """Compare Discord and Org members"""
         await interaction.response.defer(ephemeral=True)
@@ -694,7 +694,7 @@ class RSIIntegrationCog(commands.Cog):
         name="draxon-refresh",
         description="Refresh RSI organization data"
     )
-    @app_commands.checks.has_role("Chairman")
+    @app_commands.checks.has_role("Magnate")
     async def refresh_org_data(self, interaction: discord.Interaction):
         """Force refresh of organization data"""
         await interaction.response.defer(ephemeral=True)

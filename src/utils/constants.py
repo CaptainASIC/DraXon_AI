@@ -1,5 +1,5 @@
 # Version info
-APP_VERSION = "2.0.4"
+APP_VERSION = "2.0.5"
 BUILD_DATE = "Nov 2024"
 
 # Role Configuration
@@ -8,14 +8,14 @@ ROLE_HIERARCHY = [
     'Applicant',
     'Employee',
     'Team Leader',
-    'Manager',
-    'Director',
-    'Chairman'
+    'Executive',
+    'Chairman',
+    'Magnate'
 ]
 
 DraXon_ROLES = {
-    'leadership': ['Chairman', 'Director'],
-    'management': ['Manager', 'Team Leader'],
+    'leadership': ['Magnate', 'Chairman'],
+    'management': ['Executive', 'Team Leader'],
     'staff': ['Employee'],
     'restricted': ['Applicant', 'Screening']
 }

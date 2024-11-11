@@ -483,7 +483,7 @@ class PromotionCog(commands.Cog):
         name="promote",
         description="Promote a member to a higher rank"
     )
-    @app_commands.checks.has_any_role("Chairman", "Director")
+    @app_commands.checks.has_any_role("Magnate", "Chairman")
     async def promote(self, interaction: discord.Interaction):
         """Promote command with role selection interface"""
         try:
@@ -520,7 +520,7 @@ class PromotionCog(commands.Cog):
         name="demote",
         description="Update a member's rank to a lower position"
     )
-    @app_commands.checks.has_any_role("Chairman", "Director")
+    @app_commands.checks.has_any_role("Magnate", "Chairman")
     async def demote(self, interaction: discord.Interaction):
         """Demotion command with role selection interface"""
         try:
@@ -557,7 +557,7 @@ class PromotionCog(commands.Cog):
         name="rank-history",
         description="View a member's rank history"
     )
-    @app_commands.checks.has_any_role("Chairman", "Director")
+    @app_commands.checks.has_any_role("Magnate", "Chairman")
     async def rank_history(self, interaction: discord.Interaction, 
                          member: discord.Member):
         """View rank history for a member"""

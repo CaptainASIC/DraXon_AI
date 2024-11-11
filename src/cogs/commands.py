@@ -185,7 +185,7 @@ class CommandsCog(commands.Cog):
 
     @app_commands.command(name="draxon-stats", 
                          description="Display DraXon member statistics")
-    @app_commands.checks.has_any_role("Chairman", "Director")
+    @app_commands.checks.has_any_role("Magnate", "Chairman")
     async def draxon_stats(self, interaction: discord.Interaction):
         """Command to display member statistics"""
         try:
@@ -251,7 +251,7 @@ class CommandsCog(commands.Cog):
 
     @app_commands.command(name="refresh-channels", 
                          description="Manually refresh DraXon AI channels")
-    @app_commands.checks.has_role("Chairman")
+    @app_commands.checks.has_role("Magnate")
     async def refresh_channels(self, interaction: discord.Interaction):
         """Manually trigger channel refresh"""
         try:
@@ -282,7 +282,7 @@ class CommandsCog(commands.Cog):
             )
 
     @app_commands.command(name="setup", description="Configure bot channels")
-    @app_commands.checks.has_role("Chairman")
+    @app_commands.checks.has_role("Magnate")
     async def setup(self, interaction: discord.Interaction):
         """Setup command using channel selection view"""
         try:
@@ -309,7 +309,7 @@ class CommandsCog(commands.Cog):
 
     @app_commands.command(name="force-check", 
                          description="Force check for new incidents and status")
-    @app_commands.checks.has_role("Chairman")
+    @app_commands.checks.has_role("Magnate")
     async def force_check(self, interaction: discord.Interaction):
         """Manually trigger status and incident checks"""
         try:
@@ -393,9 +393,9 @@ class CommandsCog(commands.Cog):
                     inline=False
                 )
 
-                if "Chairman" in user_roles:
-                    # Chairman-only commands section
-                    chairman_commands = [
+                if "Magnate" in user_roles:
+                    # Magnate-only commands section
+                    magnate_commands = [
                         ("/refresh-channels", "Manually refresh status channels"),
                         ("/setup", "Configure bot channels and notifications"),
                         ("/force-check", "Force status and incident checks"),
@@ -405,8 +405,8 @@ class CommandsCog(commands.Cog):
                     ]
                     
                     embed.add_field(
-                        name="⚡ Chairman Commands",
-                        value="\n".join(f"`{cmd}`: {desc}" for cmd, desc in chairman_commands),
+                        name="⚡ Magnate Commands",
+                        value="\n".join(f"`{cmd}`: {desc}" for cmd, desc in magnate_commands),
                         inline=False
                     )
 
